@@ -1,0 +1,41 @@
+Quero projetar um aplicativo de comanda eletrônica de ponta para restaurantes, bares e cafés. O app deve incluir:
+
+1. **Experiência do usuário (UX/UI)**
+   - Interface simples e intuitiva para garçons, com botões grandes e categorizados.
+   - Suporte a múltiplos idiomas (Português e Espanhol).
+   - Dark mode para uso noturno.
+   - Fluxo rápido: abrir mesa → adicionar itens → enviar para cozinha → fechar conta.
+
+2. **Funcionalidades principais**
+   - Cadastro de mesas e clientes.
+   - Registro de pedidos com categorias (bebidas, entradas, pratos principais, sobremesas).
+   - Integração com impressoras de cozinha e caixa.
+   - Divisão de conta por cliente ou proporcional.
+   - Controle de estoque em tempo real.
+   - Painel administrativo com relatórios de vendas, ticket médio e produtos mais vendidos.
+
+3. **Integrações**
+   - API para integração com sistemas de pagamento (Pix, cartões, wallets).
+   - Integração com WhatsApp Cloud API para enviar confirmação de pedidos ou promoções.
+   - Banco de dados em Supabase para escalabilidade e segurança.
+   - Exportação de relatórios para Google Sheets.
+
+4. **Recursos avançados**
+   - Suporte offline com sincronização automática quando a internet voltar.
+   - Notificações push para cozinha e garçons.
+   - Dashboard web para o gerente acompanhar em tempo real.
+   - Módulo de fidelidade: pontos acumulados por cliente.
+   - Inteligência analítica: sugestão de combos e promoções com base em histórico.
+
+5. **Segurança e performance**
+   - Autenticação por usuário e função (garçom, gerente, administrador).
+   - Criptografia de dados sensíveis.
+   - Arquitetura modular para fácil manutenção.
+   - Escalabilidade para múltiplos restaurantes.
+
+6. **Design diferenciado**
+   - Layout moderno e responsivo.
+   - Ícones claros e padronizados.
+   - Paleta de cores adaptada ao setor gastronômico (tons quentes para comida, frios para bebidas).
+
+Objetivo: Criar um app competitivo, robusto e fácil de usar, que reduza erros de pedidos, acelere o atendimento e ofereça insights de gestão para donos de restaurantes.
