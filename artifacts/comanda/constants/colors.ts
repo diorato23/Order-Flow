@@ -30,6 +30,7 @@ export default {
   blue,
 
   statusColors: {
+    // inglês (legado)
     available: green,
     occupied: amber,
     reserved: blue,
@@ -39,17 +40,39 @@ export default {
     ready: green,
     delivered: muted,
     cancelled: red,
+    // português (Supabase)
+    disponivel: green,
+    ocupada: amber,
+    reservada: blue,
+    limpeza: orange,
+    pendente: orange,
+    preparando: blue,
+    pronto: green,
+    entregue: muted,
+    cancelado: red,
   },
 
   statusLabels: {
-    available: "Disponível",
+    // inglês (legado)
+    available: "Disponible",
     occupied: "Ocupada",
     reserved: "Reservada",
-    cleaning: "Limpeza",
-    pending: "Pendente",
+    cleaning: "Limpieza",
+    pending: "Pendiente",
     preparing: "Preparando",
-    ready: "Pronto",
-    delivered: "Entregue",
+    ready: "Listo",
+    delivered: "Entregado",
     cancelled: "Cancelado",
+    // espanhol (Colômbia)
+    disponivel: "Disponible",
+    ocupada: "Ocupada",
+    reservada: "Reservada",
+    limpeza: "Limpieza",
+    pendente: "Pendiente",
+    preparando: "Preparando",
+    pronto: "Listo",
+    entregue: "Entregado",
+    cancelado: "Cancelado",
   },
+
 } as const;

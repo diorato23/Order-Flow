@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import {
   View,
   Text,
@@ -11,94 +11,119 @@ import {
   TextInput,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { router, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import Colors from "@/constants/colors";
+import supabase from "../../lib/supabase/client";
+import type { Categoria, Produto } from "../../lib/supabase/types";
+import { i18n } from "../../constants/i18n";
+import { triggerN8NWebhook } from "../../lib/n8n";
+import { formatCurrency } from "../../lib/format";
+import { useAuth } from "../../context/auth";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { Alert } from "react-native";
 
-const BASE_URL = process.env.EXPO_PUBLIC_DOMAIN
-  ? `https://${process.env.EXPO_PUBLIC_DOMAIN}`
-  : "";
 
-interface Category {
-  id: number;
-  name: string;
-}
-
-interface MenuItem {
-  id: number;
-  name: string;
-  description?: string;
-  price: number;
-  categoryId: number;
-  categoryName: string;
-  available: boolean;
-  preparationTime?: number;
-}
-
+// ─── Tipos Locais ─────────────────────────────────────────────────────────────
 interface CartItem {
-  menuItem: MenuItem;
-  quantity: number;
-  notes: string;
+  produto: Produto & { categoria_nome?: string };
+  quantidade: number;
+  observacoes: string;
 }
 
-async function fetchCategories(): Promise<Category[]> {
-  const res = await fetch(`${BASE_URL}/api/categories`);
-  return res.json();
+// ─── Queries Supabase ─────────────────────────────────────────────────────────
+async function fetchCategorias(restauranteId: string): Promise<Categoria[]> {
+  const { data, error } = await supabase
+    .from("comanda_categorias")
+    .select("*")
+    .eq("restaurante_id", restauranteId)
+    .order("ordem", { ascending: true });
+  if (error) throw error;
+  return data ?? [];
 }
 
-async function fetchMenuItems(categoryId?: number): Promise<MenuItem[]> {
-  const url = categoryId
-    ? `${BASE_URL}/api/menu?categoryId=${categoryId}&available=true`
-    : `${BASE_URL}/api/menu?available=true`;
-  const res = await fetch(url);
-  return res.json();
+async function fetchProdutosDisponiveis(restauranteId: string, categoriaId?: string): Promise<(Produto & { categoria_nome?: string })[]> {
+  let query = supabase
+    .from("comanda_produtos")
+    .select("*, comanda_categorias(nome)")
+    .eq("restaurante_id", restauranteId)
+    .eq("disponivel", true)
+    .order("nome", { ascending: true });
+  if (categoriaId) query = query.eq("categoria_id", categoriaId);
+  const { data, error } = await query;
+  if (error) throw error;
+  return (data ?? []).map((p: any) => ({ ...p, categoria_nome: p.comanda_categorias?.nome ?? "" }));
 }
 
-async function createOrder(data: {
-  tableId: number;
-  items: { menuItemId: number; quantity: number; notes?: string }[];
-  notes?: string;
+async function criarPedido(data: {
+  mesa_id: string;
+  restaurante_id: string;
+  garcom_id: string;
+  observacoes?: string;
+  itens: { produto_id: string; quantidade: number; observacoes?: string; nome_produto: string; preco_unitario: number; subtotal: number }[];
 }) {
-  const res = await fetch(`${BASE_URL}/api/orders`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data),
-  });
-  return res.json();
+  const total = data.itens.reduce((s, i) => s + i.subtotal, 0);
+
+  // 1. Criar pedido
+  // @ts-ignore
+  const { data: pedido, error: errPedido } = await (supabase as any)
+    .from("comanda_pedidos")
+    .insert({
+      restaurante_id: data.restaurante_id,
+      garcom_id: data.garcom_id,
+      mesa_id: data.mesa_id,
+      observacoes: data.observacoes,
+      status: "pendente",
+      total,
+    })
+    .select()
+    .single();
+  if (errPedido) throw errPedido;
+
+  // 2. Inserir itens
+  // @ts-ignore
+  const { error: errItens } = await (supabase as any).from("comanda_itens_pedido").insert(
+    data.itens.map((i) => ({ pedido_id: (pedido as any).id, restaurante_id: data.restaurante_id, ...i }))
+  );
+  if (errItens) throw errItens;
+
+  // 3. Atualizar status da mesa para "ocupada"
+  // @ts-ignore
+  await (supabase as any).from("comanda_mesas").update({ status: "ocupada" }).eq("id", data.mesa_id);
+
+  return pedido;
 }
 
-function MenuItemTile({ item, quantity, onAdd, onRemove }: {
-  item: MenuItem;
-  quantity: number;
+// ─── Card de produto ──────────────────────────────────────────────────────────
+function MenuItemTile({ item, quantidade, onAdd, onRemove }: {
+  item: Produto & { categoria_nome?: string };
+  quantidade: number;
   onAdd: () => void;
   onRemove: () => void;
 }) {
   return (
     <View style={styles.menuTile}>
       <View style={styles.menuTileInfo}>
-        <Text style={styles.menuItemName}>{item.name}</Text>
-        {item.description ? (
-          <Text style={styles.menuItemDesc} numberOfLines={2}>{item.description}</Text>
-        ) : null}
+        <Text style={styles.menuItemName}>{item.nome}</Text>
+        {item.descricao ? <Text style={styles.menuItemDesc} numberOfLines={2}>{item.descricao}</Text> : null}
         <View style={styles.menuItemBottom}>
-          <Text style={styles.menuItemPrice}>R$ {Number(item.price).toFixed(2).replace(".", ",")}</Text>
-          {item.preparationTime ? (
+          <Text style={styles.menuItemPrice}>{formatCurrency(Number(item.preco))}</Text>
+          {item.tempo_preparo ? (
             <View style={styles.prepTime}>
               <Ionicons name="time-outline" size={11} color={Colors.textMuted} />
-              <Text style={styles.prepTimeText}>{item.preparationTime}min</Text>
+              <Text style={styles.prepTimeText}>{item.tempo_preparo}min</Text>
             </View>
           ) : null}
         </View>
       </View>
       <View style={styles.qtyControl}>
-        {quantity > 0 ? (
+        {quantidade > 0 ? (
           <>
             <TouchableOpacity onPress={onRemove} style={styles.qtyBtn}>
               <Ionicons name="remove" size={16} color={Colors.textPrimary} />
             </TouchableOpacity>
-            <Text style={styles.qtyText}>{quantity}</Text>
+            <Text style={styles.qtyText}>{quantidade}</Text>
           </>
         ) : null}
         <TouchableOpacity onPress={onAdd} style={[styles.qtyBtn, styles.qtyBtnAdd]}>
@@ -109,82 +134,192 @@ function MenuItemTile({ item, quantity, onAdd, onRemove }: {
   );
 }
 
+// ─── Tela Principal ───────────────────────────────────────────────────────────
 export default function NewOrderScreen() {
   const { tableId, tableNumber } = useLocalSearchParams<{ tableId: string; tableNumber: string }>();
   const insets = useSafeAreaInsets();
-  const qc = useQueryClient();
-  const [selectedCategory, setSelectedCategory] = useState<number | undefined>();
-  const [cart, setCart] = useState<Record<number, CartItem>>({});
+  const queryClient = useQueryClient();
+
+  const [categorias, setCategorias] = useState<Categoria[]>([]);
+  const [produtos, setProdutos] = useState<(Produto & { categoria_nome?: string })[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSending, setIsSending] = useState(false);
+  const [selectedCategoria, setSelectedCategoria] = useState<string | undefined>();
+  const [cart, setCart] = useState<Record<string, CartItem>>({});
   const [orderNotes, setOrderNotes] = useState("");
   const [showCart, setShowCart] = useState(false);
-
   const topPadding = Platform.OS === "web" ? 67 : insets.top;
 
-  const { data: categories = [] } = useQuery<Category[]>({
-    queryKey: ["categories"],
-    queryFn: fetchCategories,
-  });
+  const { profile } = useAuth();
 
-  const { data: items = [], isLoading } = useQuery<MenuItem[]>({
-    queryKey: ["menu-available", selectedCategory],
-    queryFn: () => fetchMenuItems(selectedCategory),
-  });
+  const loadCategorias = useCallback(async () => {
+    if (!profile?.restaurante_id) return;
+    try {
+      const data = await fetchCategorias(profile.restaurante_id);
+      setCategorias(data);
+    } catch (e) {
+      console.error("Erro ao carregar categorias:", e);
+    }
+  }, [profile?.restaurante_id]);
 
-  const createMutation = useMutation({
-    mutationFn: createOrder,
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["table-orders", tableId] });
-      qc.invalidateQueries({ queryKey: ["tables"] });
-      qc.invalidateQueries({ queryKey: ["kitchen-orders"] });
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      router.back();
-    },
-  });
+  const loadProdutos = useCallback(async (catId?: string) => {
+    if (!profile?.restaurante_id) return;
+    setIsLoading(true);
+    try {
+      const data = await fetchProdutosDisponiveis(profile.restaurante_id, catId);
+      setProdutos(data);
+    } catch (e) {
+      console.error("Erro ao carregar produtos:", e);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [profile?.restaurante_id]);
+
+  useEffect(() => { loadCategorias(); loadProdutos(); }, [loadCategorias, loadProdutos]);
+  useEffect(() => { loadProdutos(selectedCategoria); }, [selectedCategoria, loadProdutos]);
 
   const cartItems = Object.values(cart);
-  const cartTotal = cartItems.reduce((sum, ci) => sum + ci.menuItem.price * ci.quantity, 0);
-  const cartCount = cartItems.reduce((sum, ci) => sum + ci.quantity, 0);
+  const cartTotal = cartItems.reduce((s, ci) => s + Number(ci.produto.preco) * ci.quantidade, 0);
+  const cartCount = cartItems.reduce((s, ci) => s + ci.quantidade, 0);
 
-  const addToCart = (item: MenuItem) => {
+  const addToCart = (item: Produto & { categoria_nome?: string }) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setCart((prev) => {
-      const existing = prev[item.id];
-      return {
-        ...prev,
-        [item.id]: {
-          menuItem: item,
-          quantity: (existing?.quantity ?? 0) + 1,
-          notes: existing?.notes ?? "",
-        },
-      };
-    });
+    setCart((prev) => ({
+      ...prev,
+      [item.id]: {
+        produto: item,
+        quantidade: (prev[item.id]?.quantidade ?? 0) + 1,
+        observacoes: prev[item.id]?.observacoes ?? "",
+      },
+    }));
   };
 
-  const removeFromCart = (item: MenuItem) => {
+  const removeFromCart = (item: Produto) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setCart((prev) => {
       const existing = prev[item.id];
-      if (!existing || existing.quantity <= 1) {
-        const newCart = { ...prev };
-        delete newCart[item.id];
-        return newCart;
+      if (!existing || existing.quantidade <= 1) {
+        const next = { ...prev };
+        delete next[item.id];
+        return next;
       }
-      return { ...prev, [item.id]: { ...existing, quantity: existing.quantity - 1 } };
+      return { ...prev, [item.id]: { ...existing, quantidade: existing.quantidade - 1 } };
     });
   };
 
-  const submitOrder = () => {
-    if (cartItems.length === 0 || !tableId) return;
+  const createOrderMutation = useMutation({
+    mutationFn: async (orderData: any) => {
+      // 1. Criar pedido no Supabase
+      const { data, error } = await supabase.from("comanda_pedidos").insert({
+        mesa_id: orderData.mesa_id,
+        restaurante_id: orderData.restaurante_id,
+        garcom_id: orderData.garcom_id,
+        observacoes: orderData.observacoes,
+        total: orderData.total,
+        status: "pendente",
+      }).select().single();
+
+      if (error) throw error;
+
+      // 2. Criar itens do pedido
+      const itensComPedidoId = orderData.itens.map((item: any) => ({
+        ...item,
+        pedido_id: data.id,
+        restaurante_id: orderData.restaurante_id,
+      }));
+
+      const { error: itemsError } = await supabase.from("comanda_itens_pedido").insert(itensComPedidoId);
+      if (itemsError) throw itemsError;
+
+      // 3. Notificar n8n (em segundo plano)
+      triggerN8NWebhook("novo_pedido", orderData.webhookData).catch(err => console.error("Erro n8n:", err));
+
+      return data;
+    },
+    onMutate: async (newOrder) => {
+      // Cancelar refetches para não sobrescrever o update otimista
+      await queryClient.cancelQueries({ queryKey: ["mesa-detalhes", tableId] });
+
+      // Snapshot do valor anterior
+      const previousDetails = queryClient.getQueryData(["mesa-detalhes", tableId]);
+
+      // Update otimista (simulando que o pedido já entrou na lista da mesa)
+      queryClient.setQueryData(["mesa-detalhes", tableId], (old: any) => {
+        if (!old) return old;
+        return {
+          ...old,
+          comanda_pedidos: [
+            ...(old.comanda_pedidos || []),
+            { 
+              id: "temp-id-" + Date.now(), 
+              status: "pendente", 
+              created_at: new Date().toISOString(),
+              total: cartTotal 
+            }
+          ]
+        };
+      });
+
+      return { previousDetails };
+    },
+    onError: (err, newOrder, context) => {
+      // Rollback em caso de erro
+      if (context?.previousDetails) {
+        queryClient.setQueryData(["mesa-detalhes", tableId], context.previousDetails);
+      }
+      Alert.alert(i18n.common.error, "No se pudo enviar el pedido. Intente nuevamente.");
+    },
+    onSettled: () => {
+      // Sincronizar com o servidor
+      queryClient.invalidateQueries({ queryKey: ["mesa-detalhes", tableId] });
+      queryClient.invalidateQueries({ queryKey: ["kitchen-orders"] });
+    },
+    onSuccess: () => {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      router.back();
+    }
+  });
+
+  const submitOrder = async () => {
+    if (cartItems.length === 0 || !tableId || !profile) return;
+    setIsSending(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    createMutation.mutate({
-      tableId: Number(tableId),
-      notes: orderNotes || undefined,
-      items: cartItems.map((ci) => ({
-        menuItemId: ci.menuItem.id,
-        quantity: ci.quantity,
-        notes: ci.notes || undefined,
+
+    const itensFormatados = cartItems.map(ci => 
+      `${ci.quantidade}x ${ci.produto.nome}${ci.observacoes ? ` (${ci.observacoes})` : ""}`
+    ).join("\n");
+
+    const orderData = {
+      mesa_id: tableId,
+      restaurante_id: profile.restaurante_id,
+      garcom_id: profile.id,
+      observacoes: orderNotes || undefined,
+      total: cartTotal,
+      itens: cartItems.map((ci) => ({
+        produto_id: ci.produto.id,
+        quantidade: ci.quantidade,
+        observacoes: ci.observacoes || undefined,
+        nome_produto: ci.produto.nome,
+        preco_unitario: Number(ci.produto.preco),
+        subtotal: Number(ci.produto.preco) * ci.quantidade,
       })),
-    });
+      webhookData: {
+        mesa_id: tableId,
+        mesa_numero: tableNumber,
+        mesero_nome: profile.nome,
+        observacoes: orderNotes || "",
+        total: cartTotal,
+        itens: itensFormatados,
+      }
+    };
+
+    try {
+      await createOrderMutation.mutateAsync(orderData);
+    } catch (e) {
+      console.error("Erro ao processar pedido:", e);
+    } finally {
+      setIsSending(false);
+    }
   };
 
   const categoryIcons: Record<string, keyof typeof Ionicons.glyphMap> = {
@@ -194,6 +329,7 @@ export default function NewOrderScreen() {
     Sobremesas: "ice-cream-outline",
   };
 
+  // ─── Tela do Carrinho ────────────────────────────────────────────────────────
   if (showCart) {
     return (
       <View style={[styles.container, { paddingTop: topPadding }]}>
@@ -201,49 +337,47 @@ export default function NewOrderScreen() {
           <TouchableOpacity onPress={() => setShowCart(false)} style={styles.backButton}>
             <Ionicons name="chevron-back" size={22} color={Colors.textPrimary} />
           </TouchableOpacity>
-          <Text style={styles.title}>Conferir Pedido</Text>
+          <Text style={styles.title}>{i18n.details.checkOrder}</Text>
           <View style={{ width: 38 }} />
         </View>
 
         <ScrollView style={styles.flex} contentContainerStyle={styles.cartContent}>
-          <Text style={styles.cartMesa}>Mesa {tableNumber}</Text>
-
+          <Text style={styles.cartMesa}>{i18n.tables.tableName(Number(tableNumber))}</Text>
           {cartItems.map((ci) => (
-            <View key={ci.menuItem.id} style={styles.cartRow}>
+            <View key={ci.produto.id} style={styles.cartRow}>
               <View style={styles.qtyControl}>
-                <TouchableOpacity onPress={() => removeFromCart(ci.menuItem)} style={styles.qtyBtn}>
+                <TouchableOpacity onPress={() => removeFromCart(ci.produto)} style={styles.qtyBtn}>
                   <Ionicons name="remove" size={16} color={Colors.textPrimary} />
                 </TouchableOpacity>
-                <Text style={styles.qtyText}>{ci.quantity}</Text>
-                <TouchableOpacity onPress={() => addToCart(ci.menuItem)} style={[styles.qtyBtn, styles.qtyBtnAdd]}>
+                <Text style={styles.qtyText}>{ci.quantidade}</Text>
+                <TouchableOpacity onPress={() => addToCart(ci.produto)} style={[styles.qtyBtn, styles.qtyBtnAdd]}>
                   <Ionicons name="add" size={16} color={Colors.espresso} />
                 </TouchableOpacity>
               </View>
               <View style={styles.cartItemInfo}>
-                <Text style={styles.cartItemName}>{ci.menuItem.name}</Text>
+                <Text style={styles.cartItemName}>{ci.produto.nome}</Text>
                 <TextInput
                   style={styles.notesInput}
-                  value={ci.notes}
+                  value={ci.observacoes}
                   onChangeText={(v) =>
-                    setCart((prev) => ({ ...prev, [ci.menuItem.id]: { ...prev[ci.menuItem.id], notes: v } }))
+                    setCart((prev) => ({ ...prev, [ci.produto.id]: { ...prev[ci.produto.id], observacoes: v } }))
                   }
-                  placeholder="Observação (opcional)"
+                  placeholder={i18n.details.placeholderItemNotes}
                   placeholderTextColor={Colors.textMuted}
                 />
               </View>
               <Text style={styles.cartItemPrice}>
-                R$ {(ci.menuItem.price * ci.quantity).toFixed(2).replace(".", ",")}
+                {formatCurrency(Number(ci.produto.preco) * ci.quantidade)}
               </Text>
             </View>
           ))}
-
           <View style={styles.notesSection}>
-            <Text style={styles.notesLabel}>Observações do pedido</Text>
+            <Text style={styles.notesLabel}>{i18n.details.orderNotes}</Text>
             <TextInput
               style={[styles.input, styles.textArea]}
               value={orderNotes}
               onChangeText={setOrderNotes}
-              placeholder="Ex: cliente alérgico a camarão..."
+              placeholder={i18n.details.placeholderNotes}
               placeholderTextColor={Colors.textMuted}
               multiline
               numberOfLines={3}
@@ -253,20 +387,16 @@ export default function NewOrderScreen() {
 
         <View style={[styles.footer, { paddingBottom: insets.bottom + (Platform.OS === "web" ? 34 : 12) }]}>
           <View style={styles.totalRow}>
-            <Text style={styles.totalLabel}>Total</Text>
-            <Text style={styles.totalValue}>R$ {cartTotal.toFixed(2).replace(".", ",")}</Text>
+            <Text style={styles.totalLabel}>{i18n.dashboard.orders}</Text>
+            <Text style={styles.totalValue}>{formatCurrency(cartTotal)}</Text>
           </View>
-          <TouchableOpacity
-            onPress={submitOrder}
-            style={[styles.submitButton, createMutation.isPending && { opacity: 0.6 }]}
-            disabled={createMutation.isPending}
-          >
-            {createMutation.isPending ? (
+          <TouchableOpacity onPress={submitOrder} style={[styles.submitButton, isSending && { opacity: 0.6 }]} disabled={isSending}>
+            {isSending ? (
               <ActivityIndicator color={Colors.espresso} />
             ) : (
               <>
                 <Ionicons name="send-outline" size={18} color={Colors.espresso} />
-                <Text style={styles.submitButtonText}>Enviar para Cozinha</Text>
+                <Text style={styles.submitButtonText}>{i18n.details.sendToKitchen}</Text>
               </>
             )}
           </TouchableOpacity>
@@ -275,24 +405,19 @@ export default function NewOrderScreen() {
     );
   }
 
+  // ─── Tela do Cardápio ────────────────────────────────────────────────────────
   return (
     <View style={[styles.container, { paddingTop: topPadding }]}>
       <View style={styles.header}>
-        <TouchableOpacity
-          onPress={() => router.back()}
-          style={styles.backButton}
-        >
+        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
           <Ionicons name="chevron-back" size={22} color={Colors.textPrimary} />
         </TouchableOpacity>
         <View style={styles.headerCenter}>
-          <Text style={styles.title}>Novo Pedido</Text>
-          <Text style={styles.subtitle}>Mesa {tableNumber}</Text>
+          <Text style={styles.title}>{i18n.details.newOrder}</Text>
+          <Text style={styles.subtitle}>{i18n.tables.tableName(Number(tableNumber))}</Text>
         </View>
         {cartCount > 0 ? (
-          <TouchableOpacity
-            onPress={() => setShowCart(true)}
-            style={styles.cartButton}
-          >
+          <TouchableOpacity onPress={() => setShowCart(true)} style={styles.cartButton}>
             <Ionicons name="bag-outline" size={20} color={Colors.espresso} />
             <View style={styles.cartBadge}>
               <Text style={styles.cartBadgeText}>{cartCount}</Text>
@@ -301,52 +426,33 @@ export default function NewOrderScreen() {
         ) : <View style={{ width: 38 }} />}
       </View>
 
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={styles.catScroll}
-        contentContainerStyle={styles.catContent}
-      >
-        <TouchableOpacity
-          onPress={() => setSelectedCategory(undefined)}
-          style={[styles.catChip, !selectedCategory && styles.catChipActive]}
-        >
-          <Text style={[styles.catText, !selectedCategory && styles.catTextActive]}>Todos</Text>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.catScroll} contentContainerStyle={styles.catContent}>
+        <TouchableOpacity onPress={() => setSelectedCategoria(undefined)} style={[styles.catChip, !selectedCategoria && styles.catChipActive]}>
+          <Text style={[styles.catText, !selectedCategoria && styles.catTextActive]}>{i18n.common.all}</Text>
         </TouchableOpacity>
-        {categories.map((cat) => (
+        {categorias.map((cat) => (
           <TouchableOpacity
             key={cat.id}
-            onPress={() => {
-              setSelectedCategory(cat.id === selectedCategory ? undefined : cat.id);
-              Haptics.selectionAsync();
-            }}
-            style={[styles.catChip, selectedCategory === cat.id && styles.catChipActive]}
+            onPress={() => { setSelectedCategoria(cat.id === selectedCategoria ? undefined : cat.id); Haptics.selectionAsync(); }}
+            style={[styles.catChip, selectedCategoria === cat.id && styles.catChipActive]}
           >
-            <Ionicons
-              name={categoryIcons[cat.name] ?? "restaurant-outline"}
-              size={13}
-              color={selectedCategory === cat.id ? Colors.espresso : Colors.textSecondary}
-            />
-            <Text style={[styles.catText, selectedCategory === cat.id && styles.catTextActive]}>
-              {cat.name}
-            </Text>
+            <Ionicons name={categoryIcons[cat.nome] ?? "restaurant-outline"} size={13} color={selectedCategoria === cat.id ? Colors.espresso : Colors.textSecondary} />
+            <Text style={[styles.catText, selectedCategoria === cat.id && styles.catTextActive]}>{cat.nome}</Text>
           </TouchableOpacity>
         ))}
       </ScrollView>
 
       {isLoading ? (
-        <View style={styles.loading}>
-          <ActivityIndicator color={Colors.amber} size="large" />
-        </View>
+        <View style={styles.loading}><ActivityIndicator color={Colors.amber} size="large" /></View>
       ) : (
         <FlatList
-          data={items}
-          keyExtractor={(item) => String(item.id)}
+          data={produtos}
+          keyExtractor={(item) => item.id}
           contentContainerStyle={[styles.menuList, { paddingBottom: cartCount > 0 ? 110 : 20 }]}
           renderItem={({ item }) => (
             <MenuItemTile
               item={item}
-              quantity={cart[item.id]?.quantity ?? 0}
+              quantidade={cart[item.id]?.quantidade ?? 0}
               onAdd={() => addToCart(item)}
               onRemove={() => removeFromCart(item)}
             />
@@ -361,9 +467,9 @@ export default function NewOrderScreen() {
               <View style={styles.cartCountBadge}>
                 <Text style={styles.cartCountText}>{cartCount}</Text>
               </View>
-              <Text style={styles.cartFooterLabel}>Ver Pedido</Text>
+              <Text style={styles.cartFooterLabel}>{i18n.details.viewOrder}</Text>
             </View>
-            <Text style={styles.cartFooterTotal}>R$ {cartTotal.toFixed(2).replace(".", ",")}</Text>
+            <Text style={styles.cartFooterTotal}>{formatCurrency(cartTotal)}</Text>
           </TouchableOpacity>
         </View>
       ) : null}
@@ -374,46 +480,22 @@ export default function NewOrderScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.espresso },
   flex: { flex: 1 },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    gap: 12,
-  },
-  backButton: {
-    width: 38, height: 38, borderRadius: 12,
-    backgroundColor: Colors.charcoal, alignItems: "center", justifyContent: "center",
-  },
+  header: { flexDirection: "row", alignItems: "center", paddingHorizontal: 16, paddingVertical: 12, gap: 12 },
+  backButton: { width: 38, height: 38, borderRadius: 12, backgroundColor: Colors.charcoal, alignItems: "center", justifyContent: "center" },
   headerCenter: { flex: 1 },
   title: { fontFamily: "Inter_700Bold", fontSize: 22, color: Colors.textPrimary, letterSpacing: -0.5 },
   subtitle: { fontFamily: "Inter_400Regular", fontSize: 13, color: Colors.textMuted },
-  cartButton: {
-    width: 38, height: 38, borderRadius: 12,
-    backgroundColor: Colors.amber, alignItems: "center", justifyContent: "center",
-  },
-  cartBadge: {
-    position: "absolute", top: -4, right: -4,
-    width: 18, height: 18, borderRadius: 9,
-    backgroundColor: Colors.red, alignItems: "center", justifyContent: "center",
-    borderWidth: 2, borderColor: Colors.espresso,
-  },
+  cartButton: { width: 38, height: 38, borderRadius: 12, backgroundColor: Colors.amber, alignItems: "center", justifyContent: "center" },
+  cartBadge: { position: "absolute", top: -4, right: -4, width: 18, height: 18, borderRadius: 9, backgroundColor: Colors.red, alignItems: "center", justifyContent: "center", borderWidth: 2, borderColor: Colors.espresso },
   cartBadgeText: { fontFamily: "Inter_700Bold", fontSize: 10, color: Colors.textPrimary },
-  catScroll: { maxHeight: 48, marginBottom: 8 },
-  catContent: { paddingHorizontal: 16, gap: 8, alignItems: "center" },
-  catChip: {
-    flexDirection: "row", alignItems: "center", gap: 5,
-    paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20,
-    backgroundColor: Colors.warmDark, borderWidth: 1, borderColor: Colors.surface,
-  },
+  catScroll: { marginBottom: 12 },
+  catContent: { flexDirection: "row", paddingHorizontal: 16, gap: 10, alignItems: "center" },
+  catChip: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20, backgroundColor: Colors.warmDark, borderWidth: 1, borderColor: Colors.surface },
   catChipActive: { backgroundColor: Colors.amber, borderColor: Colors.amber },
   catText: { fontFamily: "Inter_500Medium", fontSize: 13, color: Colors.textSecondary },
   catTextActive: { color: Colors.espresso },
   menuList: { paddingHorizontal: 16, paddingTop: 8, gap: 8 },
-  menuTile: {
-    backgroundColor: Colors.charcoal, borderRadius: 14, padding: 14,
-    flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 6,
-  },
+  menuTile: { backgroundColor: Colors.charcoal, borderRadius: 14, padding: 14, flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 6 },
   menuTileInfo: { flex: 1 },
   menuItemName: { fontFamily: "Inter_600SemiBold", fontSize: 15, color: Colors.textPrimary, marginBottom: 4 },
   menuItemDesc: { fontFamily: "Inter_400Regular", fontSize: 12, color: Colors.textSecondary, marginBottom: 8 },
@@ -422,62 +504,32 @@ const styles = StyleSheet.create({
   prepTime: { flexDirection: "row", alignItems: "center", gap: 3 },
   prepTimeText: { fontFamily: "Inter_400Regular", fontSize: 11, color: Colors.textMuted },
   qtyControl: { flexDirection: "row", alignItems: "center", gap: 8 },
-  qtyBtn: {
-    width: 30, height: 30, borderRadius: 8,
-    backgroundColor: Colors.warmDark, alignItems: "center", justifyContent: "center",
-  },
+  qtyBtn: { width: 30, height: 30, borderRadius: 8, backgroundColor: Colors.warmDark, alignItems: "center", justifyContent: "center" },
   qtyBtnAdd: { backgroundColor: Colors.amber },
   qtyText: { fontFamily: "Inter_700Bold", fontSize: 15, color: Colors.textPrimary, minWidth: 20, textAlign: "center" },
   loading: { flex: 1, alignItems: "center", justifyContent: "center" },
-  cartFooter: {
-    position: "absolute", bottom: 0, left: 0, right: 0,
-    backgroundColor: Colors.charcoal, padding: 16,
-    borderTopWidth: 1, borderTopColor: Colors.warmDark,
-  },
-  cartFooterButton: {
-    backgroundColor: Colors.amber, borderRadius: 14, paddingVertical: 14,
-    paddingHorizontal: 18, flexDirection: "row", alignItems: "center", justifyContent: "space-between",
-  },
+  cartFooter: { position: "absolute", bottom: 0, left: 0, right: 0, backgroundColor: Colors.charcoal, padding: 16, borderTopWidth: 1, borderTopColor: Colors.warmDark },
+  cartFooterButton: { backgroundColor: Colors.amber, borderRadius: 14, paddingVertical: 14, paddingHorizontal: 18, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   cartFooterLeft: { flexDirection: "row", alignItems: "center", gap: 10 },
-  cartCountBadge: {
-    width: 26, height: 26, borderRadius: 8,
-    backgroundColor: Colors.espresso + "55", alignItems: "center", justifyContent: "center",
-  },
+  cartCountBadge: { width: 26, height: 26, borderRadius: 8, backgroundColor: Colors.espresso + "55", alignItems: "center", justifyContent: "center" },
   cartCountText: { fontFamily: "Inter_700Bold", fontSize: 13, color: Colors.espresso },
   cartFooterLabel: { fontFamily: "Inter_600SemiBold", fontSize: 15, color: Colors.espresso },
   cartFooterTotal: { fontFamily: "Inter_700Bold", fontSize: 15, color: Colors.espresso },
   cartContent: { padding: 16, gap: 12 },
   cartMesa: { fontFamily: "Inter_600SemiBold", fontSize: 16, color: Colors.textSecondary, marginBottom: 4 },
-  cartRow: {
-    flexDirection: "row", alignItems: "flex-start", gap: 10,
-    backgroundColor: Colors.charcoal, borderRadius: 14, padding: 12, marginBottom: 6,
-  },
+  cartRow: { flexDirection: "row", alignItems: "flex-start", gap: 10, backgroundColor: Colors.charcoal, borderRadius: 14, padding: 12, marginBottom: 6 },
   cartItemInfo: { flex: 1 },
   cartItemName: { fontFamily: "Inter_500Medium", fontSize: 14, color: Colors.textPrimary, marginBottom: 6 },
   cartItemPrice: { fontFamily: "Inter_700Bold", fontSize: 14, color: Colors.amber, paddingTop: 2 },
-  notesInput: {
-    backgroundColor: Colors.warmDark, borderRadius: 8, padding: 8,
-    fontFamily: "Inter_400Regular", fontSize: 13, color: Colors.textPrimary,
-    borderWidth: 1, borderColor: Colors.surface,
-  },
+  notesInput: { backgroundColor: Colors.warmDark, borderRadius: 8, padding: 8, fontFamily: "Inter_400Regular", fontSize: 13, color: Colors.textPrimary, borderWidth: 1, borderColor: Colors.surface },
   notesSection: { marginTop: 8 },
   notesLabel: { fontFamily: "Inter_500Medium", fontSize: 13, color: Colors.textSecondary, marginBottom: 8 },
-  input: {
-    backgroundColor: Colors.warmDark, borderRadius: 12, padding: 14,
-    fontFamily: "Inter_400Regular", fontSize: 16, color: Colors.textPrimary,
-    borderWidth: 1, borderColor: Colors.surface,
-  },
+  input: { backgroundColor: Colors.warmDark, borderRadius: 12, padding: 14, fontFamily: "Inter_400Regular", fontSize: 16, color: Colors.textPrimary, borderWidth: 1, borderColor: Colors.surface },
   textArea: { minHeight: 80, textAlignVertical: "top" },
-  footer: {
-    backgroundColor: Colors.charcoal, borderTopWidth: 1, borderTopColor: Colors.warmDark,
-    paddingHorizontal: 16, paddingTop: 12, gap: 12,
-  },
+  footer: { backgroundColor: Colors.charcoal, borderTopWidth: 1, borderTopColor: Colors.warmDark, paddingHorizontal: 16, paddingTop: 12, gap: 12 },
   totalRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   totalLabel: { fontFamily: "Inter_500Medium", fontSize: 15, color: Colors.textSecondary },
   totalValue: { fontFamily: "Inter_700Bold", fontSize: 22, color: Colors.green },
-  submitButton: {
-    flexDirection: "row", alignItems: "center", justifyContent: "center",
-    gap: 10, backgroundColor: Colors.amber, borderRadius: 14, paddingVertical: 14,
-  },
+  submitButton: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10, backgroundColor: Colors.amber, borderRadius: 14, paddingVertical: 14 },
   submitButtonText: { fontFamily: "Inter_600SemiBold", fontSize: 16, color: Colors.espresso },
 });

@@ -8,18 +8,21 @@ import {
   RefreshControl,
   Platform,
   ActivityIndicator,
+  ScrollView,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import Colors from "@/constants/colors";
+import { i18n } from "../../constants/i18n";
+import { triggerN8NWebhook } from "../../lib/n8n";
 
-const BASE_URL = process.env.EXPO_PUBLIC_DOMAIN
-  ? `https://${process.env.EXPO_PUBLIC_DOMAIN}`
-  : "";
+import supabase from "../../lib/supabase/client";
+import { useAuth } from "../../context/auth";
+import { useEffect } from "react";
 
-type OrderStatus = "pending" | "preparing" | "ready" | "delivered" | "cancelled";
+type OrderStatus = "pendente" | "preparando" | "pronto" | "entregue" | "cancelado";
 
 interface OrderItem {
   id: number;
@@ -30,28 +33,52 @@ interface OrderItem {
 }
 
 interface Order {
-  id: number;
+  id: string;
   tableNumber: number;
   status: OrderStatus;
   items: OrderItem[];
   total: number;
   notes?: string;
   createdAt: string;
+  garcomId: string | null;
 }
 
-async function fetchKitchenOrders() {
-  const res = await fetch(`${BASE_URL}/api/orders`);
-  const all: Order[] = await res.json();
-  return all.filter((o) => o.status !== "delivered" && o.status !== "cancelled");
+async function fetchKitchenOrders(restauranteId: string) {
+  const { data, error } = await supabase
+    .from("comanda_pedidos")
+    .select("*, comanda_mesas(numero), comanda_itens_pedido(*)")
+    .eq("restaurante_id", restauranteId)
+    .neq("status", "entregue")
+    .neq("status", "cancelado")
+    .order("criado_em", { ascending: true });
+
+  if (error) throw error;
+
+  return (data || []).map((o: any) => ({
+    id: o.id,
+    tableNumber: o.comanda_mesas?.numero || 0,
+    status: o.status as OrderStatus,
+    total: o.total,
+    notes: o.observacoes,
+    createdAt: o.criado_em,
+    garcomId: o.garcom_id,
+    items: (o.comanda_itens_pedido || []).map((i: any) => ({
+      id: i.id,
+      menuItemName: i.nome_produto,
+      quantity: i.quantidade,
+      notes: i.observacoes,
+      subtotal: i.subtotal,
+    })),
+  }));
 }
 
-async function updateOrderStatus(id: number, status: OrderStatus) {
-  const res = await fetch(`${BASE_URL}/api/orders/${id}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ status }),
-  });
-  return res.json();
+async function updateOrderStatus(id: string, status: OrderStatus) {
+  const { error } = await (supabase as any)
+    .from("comanda_pedidos")
+    .update({ status: status } as any)
+    .eq("id", id);
+  if (error) throw error;
+  return { success: true };
 }
 
 function timeAgo(dateStr: string) {
@@ -61,24 +88,23 @@ function timeAgo(dateStr: string) {
   return `${Math.floor(diff / 3600)}h`;
 }
 
-function OrderCard({ order, onStatusChange }: { order: Order; onStatusChange: (id: number, status: OrderStatus) => void }) {
+const OrderCard = React.memo(({ order, onStatusChange }: { order: Order; onStatusChange: (id: string, status: OrderStatus) => void }) => {
   const statusColor = Colors.statusColors[order.status];
-  const statusLabel = Colors.statusLabels[order.status];
-
+  
   const nextStatus: Record<OrderStatus, OrderStatus | null> = {
-    pending: "preparing",
-    preparing: "ready",
-    ready: "delivered",
-    delivered: null,
-    cancelled: null,
+    pendente: "preparando",
+    preparando: "pronto",
+    pronto: "entregue",
+    entregue: null,
+    cancelado: null,
   };
 
   const nextStatusLabel: Record<OrderStatus, string> = {
-    pending: "Iniciar",
-    preparing: "Pronto",
-    ready: "Entregue",
-    delivered: "",
-    cancelled: "",
+    pendente: i18n.kitchen.actions.start,
+    preparando: i18n.kitchen.actions.ready,
+    pronto: i18n.kitchen.actions.delivered,
+    entregue: "",
+    cancelado: "",
   };
 
   const next = nextStatus[order.status];
@@ -87,9 +113,9 @@ function OrderCard({ order, onStatusChange }: { order: Order; onStatusChange: (i
     <View style={[styles.orderCard, { borderLeftColor: statusColor }]}>
       <View style={styles.orderHeader}>
         <View style={styles.orderHeaderLeft}>
-          <Text style={styles.tableNum}>Mesa {order.tableNumber}</Text>
+          <Text style={styles.tableNum}>{i18n.tables.tableName(order.tableNumber)}</Text>
           <View style={[styles.statusPill, { backgroundColor: statusColor + "22" }]}>
-            <Text style={[styles.statusPillText, { color: statusColor }]}>{statusLabel}</Text>
+            <Text style={[styles.statusPillText, { color: statusColor }]}>{i18n.common.status[order.status]}</Text>
           </View>
         </View>
         <View style={styles.orderHeaderRight}>
@@ -130,7 +156,7 @@ function OrderCard({ order, onStatusChange }: { order: Order; onStatusChange: (i
           style={[styles.actionButton, { backgroundColor: statusColor }]}
         >
           <Ionicons
-            name={next === "preparing" ? "flame" : next === "ready" ? "checkmark-circle" : "checkmark-done-circle"}
+            name={next === "preparando" ? "flame" : next === "pronto" ? "checkmark-circle" : "checkmark-done-circle"}
             size={16}
             color={Colors.espresso}
           />
@@ -139,7 +165,7 @@ function OrderCard({ order, onStatusChange }: { order: Order; onStatusChange: (i
       ) : null}
     </View>
   );
-}
+});
 
 export default function KitchenScreen() {
   const insets = useSafeAreaInsets();
@@ -149,18 +175,62 @@ export default function KitchenScreen() {
 
   const topPadding = Platform.OS === "web" ? 67 : insets.top;
 
-  const { data: orders = [], isLoading } = useQuery<Order[]>({
-    queryKey: ["kitchen-orders"],
-    queryFn: fetchKitchenOrders,
-    refetchInterval: 8000,
+  const { profile } = useAuth();
+  const { data: orders = [] as Order[], isLoading } = useQuery<Order[]>({
+    queryKey: ["kitchen-orders", profile?.restaurante_id],
+    queryFn: () => fetchKitchenOrders(profile?.restaurante_id || ""),
+    enabled: !!profile?.restaurante_id,
+    refetchInterval: 30000, // Aumentado pois o Realtime fará o trabalho pesado
   });
 
+  // ─── Realtime Sync ─────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!profile?.restaurante_id) return;
+
+    console.log("[DEBUG] Ativando Realtime Cozinha para:", profile.restaurante_id);
+
+    const channel = supabase
+      .channel("kitchen-realtime")
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "comanda_pedidos",
+          filter: `restaurante_id=eq.${profile.restaurante_id}`,
+        },
+        (payload) => {
+          console.log("[DEBUG] Mudança detectada na cozinha:", payload.eventType);
+          qc.invalidateQueries({ queryKey: ["kitchen-orders"] });
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [profile?.restaurante_id, qc]);
+
   const statusMutation = useMutation({
-    mutationFn: ({ id, status }: { id: number; status: OrderStatus }) => updateOrderStatus(id, status),
-    onSuccess: () => {
+    mutationFn: ({ id, status }: { id: string; status: OrderStatus }) => updateOrderStatus(id, status),
+    onSuccess: (_, variables) => {
       qc.invalidateQueries({ queryKey: ["kitchen-orders"] });
       qc.invalidateQueries({ queryKey: ["tables"] });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
+      // Disparar notificação se o pedido estiver PRONTO (Listo)
+      if (variables.status === "pronto") {
+        const order = orders.find(o => o.id === variables.id);
+        triggerN8NWebhook("pedido_pronto", {
+          pedido_id: variables.id,
+          mesa_numero: order?.tableNumber,
+          garcom_id: order?.garcomId,
+          restaurante_id: profile?.restaurante_id,
+          titulo: i18n.common.status.pronto,
+          mensagem: `El pedido de la Mesa ${order?.tableNumber} está listo!`,
+        });
+      }
     },
   });
 
@@ -173,53 +243,60 @@ export default function KitchenScreen() {
   const filtered = filterStatus === "all" ? orders : orders.filter((o) => o.status === filterStatus);
 
   const counts = {
-    pending: orders.filter((o) => o.status === "pending").length,
-    preparing: orders.filter((o) => o.status === "preparing").length,
-    ready: orders.filter((o) => o.status === "ready").length,
+    pendente: orders.filter((o) => o.status === "pendente").length,
+    preparando: orders.filter((o) => o.status === "preparando").length,
+    pronto: orders.filter((o) => o.status === "pronto").length,
   };
 
   const statusFilters: Array<{ key: OrderStatus | "all"; label: string; count?: number }> = [
-    { key: "all", label: "Todos", count: orders.length },
-    { key: "pending", label: "Pendentes", count: counts.pending },
-    { key: "preparing", label: "Preparando", count: counts.preparing },
-    { key: "ready", label: "Prontos", count: counts.ready },
+    { key: "all", label: i18n.kitchen.filterAll, count: orders.length },
+    { key: "pendente", label: i18n.kitchen.filterPending, count: counts.pendente },
+    { key: "preparando", label: i18n.kitchen.filterPreparing, count: counts.preparando },
+    { key: "pronto", label: i18n.kitchen.filterReady, count: counts.pronto },
   ];
 
   return (
     <View style={[styles.container, { paddingTop: topPadding }]}>
       <View style={styles.header}>
         <View>
-          <Text style={styles.title}>Cozinha</Text>
-          <Text style={styles.subtitle}>{orders.length} pedidos ativos</Text>
+          <Text style={styles.title}>{i18n.kitchen.title}</Text>
+          <Text style={styles.subtitle}>{i18n.kitchen.subtitle(orders.length)}</Text>
         </View>
         <View style={styles.liveIndicator}>
           <View style={styles.liveDot} />
-          <Text style={styles.liveText}>Ao vivo</Text>
+          <Text style={styles.liveText}>{i18n.kitchen.live}</Text>
         </View>
       </View>
 
-      <View style={styles.filterRow}>
-        {statusFilters.map((f) => (
-          <TouchableOpacity
-            key={f.key}
-            onPress={() => {
-              setFilterStatus(f.key);
-              Haptics.selectionAsync();
-            }}
-            style={[styles.filterChip, filterStatus === f.key && styles.filterChipActive]}
-          >
-            <Text style={[styles.filterText, filterStatus === f.key && styles.filterTextActive]}>
-              {f.label}
-            </Text>
-            {f.count !== undefined && f.count > 0 ? (
-              <View style={[styles.filterBadge, filterStatus === f.key && styles.filterBadgeActive]}>
-                <Text style={[styles.filterBadgeText, filterStatus === f.key && styles.filterBadgeTextActive]}>
-                  {f.count}
-                </Text>
-              </View>
-            ) : null}
-          </TouchableOpacity>
-        ))}
+      <View>
+        <ScrollView 
+          horizontal 
+          showsHorizontalScrollIndicator={false}
+          style={styles.filterScroll}
+          contentContainerStyle={styles.filterRow}
+        >
+          {statusFilters.map((f) => (
+            <TouchableOpacity
+              key={f.key}
+              onPress={() => {
+                setFilterStatus(f.key);
+                Haptics.selectionAsync();
+              }}
+              style={[styles.filterChip, filterStatus === f.key && styles.filterChipActive]}
+            >
+              <Text style={[styles.filterText, filterStatus === f.key && styles.filterTextActive]}>
+                {f.label}
+              </Text>
+              {f.count !== undefined && f.count > 0 ? (
+                <View style={[styles.filterBadge, filterStatus === f.key && styles.filterBadgeActive]}>
+                  <Text style={[styles.filterBadgeText, filterStatus === f.key && styles.filterBadgeTextActive]}>
+                    {f.count}
+                  </Text>
+                </View>
+              ) : null}
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
       </View>
 
       {isLoading ? (
@@ -229,8 +306,8 @@ export default function KitchenScreen() {
       ) : filtered.length === 0 ? (
         <View style={styles.empty}>
           <Ionicons name="flame-outline" size={52} color={Colors.textMuted} />
-          <Text style={styles.emptyTitle}>Cozinha tranquila</Text>
-          <Text style={styles.emptySubtitle}>Nenhum pedido ativo no momento</Text>
+          <Text style={styles.emptyTitle}>{i18n.kitchen.empty}</Text>
+          <Text style={styles.emptySubtitle}>{i18n.kitchen.emptySubtitle}</Text>
         </View>
       ) : (
         <FlatList
@@ -244,6 +321,10 @@ export default function KitchenScreen() {
               tintColor={Colors.amber}
             />
           }
+          removeClippedSubviews={true}
+          maxToRenderPerBatch={10}
+          windowSize={5}
+          initialNumToRender={5}
           renderItem={({ item }) => (
             <OrderCard
               order={item}
@@ -301,23 +382,12 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: Colors.green,
   },
-  filterRow: {
-    flexDirection: "row",
-    paddingHorizontal: 16,
-    gap: 8,
-    marginBottom: 12,
-    flexWrap: "wrap",
-  },
+  filterScroll: { marginBottom: 16 },
+  filterRow: { flexDirection: "row", paddingHorizontal: 16, gap: 10, alignItems: "center" },
   filterChip: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 20,
-    backgroundColor: Colors.warmDark,
-    borderWidth: 1,
-    borderColor: Colors.surface,
-    gap: 6,
+    paddingHorizontal: 20, paddingVertical: 10, borderRadius: 25,
+    backgroundColor: Colors.warmDark, borderWidth: 1, borderColor: Colors.surface,
+    justifyContent: "center", alignItems: "center", flexDirection: "row", gap: 6
   },
   filterChipActive: {
     backgroundColor: Colors.amber,
