@@ -1,0 +1,28 @@
+﻿
+> @workspace/comanda@0.0.0 typecheck C:\Users\diora\OneDrive\Documentos\Comanda-APP\Order-Flow\artifacts\comanda
+> tsc -p tsconfig.json --noEmit
+
+app/(tabs)/index.tsx(45,6): error TS2769: No overload matches this call.
+  Overload 1 of 2, '(values: never, options?: { count?: "exact" | "planned" | "estimated" | undefined; } | undefined): PostgrestFilterBuilder<{ PostgrestVersion: "12"; }, never, never, null, "comanda_mesas", never, "POST">', gave the following error.
+    Argument of type '{ restaurante_id: string; numero: number; capacidade: number; }' is not assignable to parameter of type 'never'.
+  Overload 2 of 2, '(values: never[], options?: { count?: "exact" | "planned" | "estimated" | undefined; defaultToNull?: boolean | undefined; } | undefined): PostgrestFilterBuilder<{ PostgrestVersion: "12"; }, never, never, null, "comanda_mesas", never, "POST">', gave the following error.
+    Object literal may only specify known properties, and 'restaurante_id' does not exist in type 'never[]'.
+app/(tabs)/index.tsx(55,13): error TS2345: Argument of type '{ numero: number; capacidade: number; }' is not assignable to parameter of type 'never'.
+app/(tabs)/index.tsx(93,13): error TS2345: Argument of type '{ status: string; }' is not assignable to parameter of type 'never'.
+app/(tabs)/menu.tsx(216,9): error TS2304: Cannot find name 'router'.
+app/(tabs)/menu.tsx(219,22): error TS2448: Block-scoped variable 'produtos' used before its declaration.
+app/(tabs)/menu.tsx(219,22): error TS2454: Variable 'produtos' is used before being assigned.
+app/menu/[id].tsx(77,58): error TS2339: Property 'comanda_categorias' does not exist on type 'never'.
+app/menu/[id].tsx(78,24): error TS2339: Property 'tempo_preparo' does not exist on type 'never'.
+app/menu/[id].tsx(81,58): error TS2339: Property 'tempo_preparo' does not exist on type 'never'.
+app/menu/[id].tsx(86,49): error TS2339: Property 'nome' does not exist on type 'never'.
+app/menu/[id].tsx(88,54): error TS2339: Property 'preco' does not exist on type 'never'.
+app/menu/[id].tsx(95,24): error TS2339: Property 'descricao' does not exist on type 'never'.
+app/order/new.tsx(190,18): error TS2339: Property 'observacoes' does not exist on type 'never'.
+app/order/new.tsx(190,52): error TS2339: Property 'observacoes' does not exist on type 'never'.
+app/order/new.tsx(343,51): error TS2345: Argument of type '{ status: string; }' is not assignable to parameter of type 'never'.
+lib/notifications.ts(9,35): error TS2322: Type 'Promise<{ shouldShowAlert: true; shouldPlaySound: true; shouldSetBadge: false; }>' is not assignable to type 'Promise<NotificationBehavior>'.
+  Type '{ shouldShowAlert: true; shouldPlaySound: true; shouldSetBadge: false; }' is missing the following properties from type 'NotificationBehavior': shouldShowBanner, shouldShowList
+lib/notifications.ts(73,13): error TS2345: Argument of type 'any' is not assignable to parameter of type 'never'.
+test_types.ts(7,50): error TS2307: Cannot find module '@supabase/supabase-js/dist/module/lib/types' or its corresponding type declarations.
+ÔÇëELIFECYCLEÔÇë Command failed with exit code 2.

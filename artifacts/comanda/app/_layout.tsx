@@ -12,8 +12,9 @@ import React, { useEffect } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-import { View, StyleSheet, Platform } from "react-native";
+import { View, StyleSheet, Platform, Text } from "react-native";
 import { StatusBar } from "expo-status-bar";
+import { Ionicons } from "@expo/vector-icons";
 import { AuthProvider } from "../context/auth";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { createAsyncStoragePersister } from "@tanstack/query-async-storage-persister";
@@ -21,16 +22,49 @@ import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client
 
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import Colors from "@/constants/colors";
+import { offlineStore } from "../lib/offline/store";
+
+// ─── Componente de Status Offline ───────────────────────────────────────────
+function OfflineStatus() {
+  const [pendingCount, setPendingCount] = React.useState(0);
+
+  useEffect(() => {
+    const checkQueue = async () => {
+      const queue = await offlineStore.getQueue();
+      setPendingCount(queue.length);
+    };
+
+    const interval = setInterval(() => {
+      checkQueue();
+      if (pendingCount > 0) offlineStore.sync();
+    }, 10000); // Tentar sincronizar a cada 10s
+
+    checkQueue();
+    return () => clearInterval(interval);
+  }, [pendingCount]);
+
+  if (pendingCount === 0) return null;
+
+  return (
+    <View style={styles.offlineBanner}>
+      <Ionicons name="cloud-offline-outline" size={14} color="#fff" />
+      <Text style={styles.offlineText}>
+        {pendingCount} {pendingCount === 1 ? 'pedido pendente' : 'pedidos pendentes'} para sincronizar...
+      </Text>
+    </View>
+  );
+}
 
 SplashScreen.preventAutoHideAsync();
 
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 1000 * 30, // 30 segundos de cache antes de revalidar
+      staleTime: 1000 * 60 * 5, // 5 minutos de "vfresh" antes de tentar revalidar
       gcTime: 1000 * 60 * 60 * 24, // 24 horas de persistência
-      retry: 1,
-      refetchOnWindowFocus: false, // Evita lentidão ao trocar de app/aba
+      retry: 2, // Tentar um pouco mais em caso de oscilação
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: 'always', // Revalidar assim que a rede voltar
     },
   },
 });
@@ -118,6 +152,7 @@ export default function RootLayout() {
                 <GestureHandlerRootView style={{ flex: 1, backgroundColor: Colors.espresso }}>
                   <KeyboardProvider>
                     <StatusBar style="light" />
+                    <OfflineStatus />
                     <RootLayoutNav />
                   </KeyboardProvider>
                 </GestureHandlerRootView>
@@ -151,5 +186,18 @@ const styles = StyleSheet.create({
       shadowRadius: 16.00,
       elevation: 24,
     } : {}),
-  }
+  },
+  offlineBanner: {
+    backgroundColor: Colors.amber,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+    gap: 8,
+  },
+  offlineText: {
+    fontFamily: 'Inter_600SemiBold',
+    fontSize: 12,
+    color: '#fff',
+  },
 });

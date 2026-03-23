@@ -1,0 +1,27 @@
+﻿app/(tabs)/dashboard.tsx(32,63): error TS2345: Argument of type '{ p_restaurante_id: string; }' is not assignable to parameter of type 'undefined'.
+app/(tabs)/index.tsx(43,6): error TS2769: No overload matches this call.
+  Overload 1 of 2, '(values: never, options?: { count?: "exact" | "planned" | "estimated" | undefined; } | undefined): PostgrestFilterBuilder<{ PostgrestVersion: "12"; }, never, never, null, "comanda_mesas", never, "POST">', gave the following error.
+    Argument of type '{ restaurante_id: string; numero: number; capacidade: number; }' is not assignable to parameter of type 'never'.
+  Overload 2 of 2, '(values: never[], options?: { count?: "exact" | "planned" | "estimated" | undefined; defaultToNull?: boolean | undefined; } | undefined): PostgrestFilterBuilder<{ PostgrestVersion: "12"; }, never, never, null, "comanda_mesas", never, "POST">', gave the following error.
+    Object literal may only specify known properties, and 'restaurante_id' does not exist in type 'never[]'.
+app/(tabs)/kitchen.tsx(42,77): error TS2339: Property 'id' does not exist on type 'never'.
+app/(tabs)/kitchen.tsx(43,68): error TS2339: Property 'mesa_id' does not exist on type 'never'.
+app/(tabs)/kitchen.tsx(46,9): error TS2698: Spread types may only be created from object types.
+app/(tabs)/kitchen.tsx(48,28): error TS2339: Property 'numero' does not exist on type 'never'.
+app/(tabs)/kitchen.tsx(59,13): error TS2345: Argument of type '{ status: PedidoStatus; }' is not assignable to parameter of type 'never'.
+app/(tabs)/menu.tsx(70,13): error TS2345: Argument of type '{ disponivel: boolean; }' is not assignable to parameter of type 'never'.
+app/order/new.tsx(65,6): error TS2769: No overload matches this call.
+  Overload 1 of 2, '(values: never, options?: { count?: "exact" | "planned" | "estimated" | undefined; } | undefined): PostgrestFilterBuilder<{ PostgrestVersion: "12"; }, never, never, null, "comanda_pedidos", never, "POST">', gave the following error.
+    Argument of type '{ restaurante_id: string; mesa_id: string; observacoes: string | undefined; status: string; total: number; }' is not assignable to parameter of type 'never'.
+  Overload 2 of 2, '(values: never[], options?: { count?: "exact" | "planned" | "estimated" | undefined; defaultToNull?: boolean | undefined; } | undefined): PostgrestFilterBuilder<{ PostgrestVersion: "12"; }, never, never, null, "comanda_pedidos", never, "POST">', gave the following error.
+    Object literal may only specify known properties, and 'restaurante_id' does not exist in type 'never[]'.
+app/order/new.tsx(79,5): error TS2769: No overload matches this call.
+  Overload 1 of 2, '(values: never, options?: { count?: "exact" | "planned" | "estimated" | undefined; } | undefined): PostgrestFilterBuilder<{ PostgrestVersion: "12"; }, never, never, null, "comanda_itens_pedido", never, "POST">', gave the following error.
+    Argument of type '{ produto_id: string; quantidade: number; observacoes?: string | undefined; nome_produto: string; preco_unitario: number; subtotal: number; pedido_id: any; }[]' is not assignable to parameter of type 'never'.
+  Overload 2 of 2, '(values: never[], options?: { count?: "exact" | "planned" | "estimated" | undefined; defaultToNull?: boolean | undefined; } | undefined): PostgrestFilterBuilder<{ PostgrestVersion: "12"; }, never, never, null, "comanda_itens_pedido", never, "POST">', gave the following error.
+    Argument of type '{ produto_id: string; quantidade: number; observacoes?: string | undefined; nome_produto: string; preco_unitario: number; subtotal: number; pedido_id: any; }[]' is not assignable to parameter of type 'never[]'.
+      Type '{ produto_id: string; quantidade: number; observacoes?: string; nome_produto: string; preco_unitario: number; subtotal: number; pedido_id: any; }' is not assignable to type 'never'.
+app/order/new.tsx(79,48): error TS2339: Property 'id' does not exist on type 'never'.
+app/table/[id].tsx(48,28): error TS2339: Property 'id' does not exist on type 'never'.
+app/table/[id].tsx(49,16): error TS2698: Spread types may only be created from object types.
+app/table/[id].tsx(59,13): error TS2345: Argument of type '{ status: MesaStatus; }' is not assignable to parameter of type 'never'.

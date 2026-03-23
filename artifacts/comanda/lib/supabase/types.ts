@@ -295,11 +295,11 @@ export type Database = {
       }
     }
     Enums: {
-      comanda_mesa_status: 'disponivel' | 'ocupada' | 'reservada' | 'limpeza'
-      comanda_pedido_status: 'pendente' | 'preparando' | 'pronto' | 'entregue' | 'cancelado'
-      comanda_usuario_funcao: 'garcom' | 'mesero' | 'gerente' | 'admin'
+      [_ in never]: never
     }
-    Views: Record<string, never>
+    Views: {
+      [_ in never]: never
+    }
   }
 }
 

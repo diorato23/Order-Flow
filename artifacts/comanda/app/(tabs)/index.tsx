@@ -40,8 +40,7 @@ async function fetchMesas(restauranteId: string): Promise<Mesa[]> {
 }
 
 async function criarMesa(restauranteId: string, numero: number, capacidade: number) {
-  // @ts-ignore
-  const { data, error } = await (supabase as any)
+  const { data, error } = await supabase
     .from("comanda_mesas")
     .insert({ restaurante_id: restauranteId, numero, capacidade })
     .select()
@@ -51,8 +50,7 @@ async function criarMesa(restauranteId: string, numero: number, capacidade: numb
 }
 
 async function atualizarMesa(id: string, data: { numero: number; capacidade: number }) {
-  // @ts-ignore
-  const { error } = await (supabase as any)
+  const { error } = await supabase
     .from("comanda_mesas")
     .update(data)
     .eq("id", id);
@@ -60,8 +58,7 @@ async function atualizarMesa(id: string, data: { numero: number; capacidade: num
 }
 
 async function excluirMesa(id: string) {
-  // @ts-ignore
-  const { error } = await (supabase as any)
+  const { error } = await supabase
     .from("comanda_mesas")
     .delete()
     .eq("id", id);
@@ -91,8 +88,7 @@ async function fetchReadyOrders(restauranteId: string): Promise<ReadyOrder[]> {
 }
 
 async function markOrderDelivered(id: string) {
-  // @ts-ignore
-  const { error } = await (supabase as any)
+  const { error } = await supabase
     .from("comanda_pedidos")
     .update({ status: "entregue" })
     .eq("id", id);
@@ -157,10 +153,18 @@ export default function TablesScreen() {
 
   const saveMutation = useMutation({
     mutationFn: async (payload: { numero: number; capacidade: number }) => {
+      const restId = profile?.restaurante_id;
+      console.log("Tentando salvar mesa. Restaurante ID:", restId);
+
       if (editingMesa) {
         return atualizarMesa(editingMesa.id, payload);
       }
-      return criarMesa(profile?.restaurante_id || "", payload.numero, payload.capacidade);
+
+      if (!restId || restId === "") {
+        throw new Error("ID do restaurante está vazio ou inválido.");
+      }
+
+      return criarMesa(restId, payload.numero, payload.capacidade);
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["tables"] });
@@ -235,8 +239,10 @@ export default function TablesScreen() {
   }, [qc]);
 
   const handleAdd = async () => {
-    if (!profile?.restaurante_id) {
-      Alert.alert("Erro", "Perfil de restaurante não carregado. Tente novamente em instantes.");
+    console.log("handleAdd acionado. Perfil atual:", profile);
+    
+    if (!profile?.restaurante_id || profile.restaurante_id.length < 10) {
+      Alert.alert("Erro", "Seu restaurante ainda não foi carregado corretamente. Por favor, reinicie o app.");
       return;
     }
 
@@ -373,7 +379,7 @@ export default function TablesScreen() {
               index={index}
               onPress={() => {
                 Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                router.push({ pathname: "/table/[id]", params: { id: item.id } });
+                router.push(`/table/${item.id}`);
               }}
               onEdit={() => handleEditPress(item)}
             />

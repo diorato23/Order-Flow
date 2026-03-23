@@ -9,38 +9,94 @@ import {
   ActivityIndicator,
   TextInput,
   Modal,
+  Alert,
 } from "react-native";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { router, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import Colors from "@/constants/colors";
-import supabase from "../../lib/supabase/client";
-import type { Mesa, MesaStatus, Pedido, ItemPedido, PedidoStatus } from "../../lib/supabase/types";
 import { i18n } from "../../constants/i18n";
 import { triggerN8NWebhook } from "../../lib/n8n";
 import { formatCurrency } from "../../lib/format";
-
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import supabase from "../../lib/supabase/client";
 import { useAuth } from "../../context/auth";
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
+type MesaStatus = "disponivel" | "ocupada" | "reservada" | "limpeza";
+
+interface Mesa {
+  id: string;
+  numero: number;
+  status: MesaStatus;
+  capacidade: number;
+  nome_cliente?: string;
+}
+
+interface ItemPedido {
+  id: number;
+  produto_id: string;
+  nome_produto: string;
+  quantidade: number;
+  preco_unitario: number;
+  subtotal: number;
+  observacoes?: string;
+}
+
+interface Pedido {
+  id: string;
+  mesa_id: string;
+  garcom_id: string;
+  status: "pendente" | "preparando" | "pronto" | "entregue" | "cancelado";
+  total: number;
+  observacoes?: string;
+  criado_em: string;
+  comanda_usuarios?: { nome: string };
+}
+
 type PedidoComItens = Pedido & { itens: ItemPedido[] };
 
 // ─── Queries Supabase ─────────────────────────────────────────────────────────
+function isNetworkError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const err = error as any;
+  const message: string = err.message || "";
+  const code: string | undefined = err.code;
+  const status = err.status;
+
+  return (
+    message.toLowerCase().includes("fetch") ||
+    message.toLowerCase().includes("network") ||
+    !status ||
+    code === "PGRST_FETCH_ERROR"
+  );
+}
+
 async function fetchMesa(id: string): Promise<Mesa | null> {
   const { data, error } = await supabase
     .from("comanda_mesas")
     .select("*")
     .eq("id", id)
     .single();
-  if (error) return null;
+
+  if (error) {
+    // Em caso de erro de rede, deixamos o React Query manter o cache anterior
+    if (isNetworkError(error)) {
+      console.log("[Offline] Falha de rede ao buscar mesa, mantendo dados em cache se existirem.");
+      throw error;
+    }
+    // Outros erros (ex: 404 real) significam que a mesa não existe
+    return null;
+  }
+
   return data;
 }
 
 async function fetchPedidosDaMesa(mesaId: string): Promise<PedidoComItens[]> {
   const { data: pedidos, error } = await supabase
     .from("comanda_pedidos")
-    .select("*")
+    .select("*, comanda_usuarios(nome)")
     .eq("mesa_id", mesaId)
     .not("status", "eq", "cancelado")
     .order("criado_em", { ascending: false });
@@ -48,7 +104,7 @@ async function fetchPedidosDaMesa(mesaId: string): Promise<PedidoComItens[]> {
 
   const pedidosComItens = await Promise.all(
     (pedidos as any[]).map(async (p) => {
-      const { data: itens } = await (supabase as any)
+      const { data: itens } = await supabase
         .from("comanda_itens_pedido")
         .select("*")
         .eq("pedido_id", p.id);
@@ -59,8 +115,7 @@ async function fetchPedidosDaMesa(mesaId: string): Promise<PedidoComItens[]> {
 }
 
 async function atualizarStatusMesa(id: string, status: MesaStatus) {
-  // @ts-ignore
-  const { error } = await (supabase as any)
+  const { error } = await supabase
     .from("comanda_mesas")
     .update({ status })
     .eq("id", id);
@@ -78,46 +133,63 @@ function timeAgo(dateStr: string) {
 // ─── Tela Principal ───────────────────────────────────────────────────────────
 export default function TableDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  const router = useRouter();
   const insets = useSafeAreaInsets();
   const { profile } = useAuth();
-  const [mesa, setMesa] = useState<Mesa | null>(null);
-  const [pedidos, setPedidos] = useState<PedidoComItens[]>([]);
-  const [loading, setLoading] = useState(true);
+  const qc = useQueryClient();
+
   const [updatingStatus, setUpdatingStatus] = useState(false);
   const [showStatusModal, setShowStatusModal] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [showCancelModal, setShowCancelModal] = useState(false);
+  const [orderToCancel, setOrderToCancel] = useState<string | null>(null);
+  const [cancelReason, setCancelReason] = useState("");
   const [clienteNome, setClienteNome] = useState("");
   const topPadding = Platform.OS === "web" ? 67 : insets.top;
 
-  const load = useCallback(async () => {
-    if (!id) return;
-    const [mesaData, pedidosData] = await Promise.all([
-      fetchMesa(id),
-      fetchPedidosDaMesa(id),
-    ]);
-    setMesa(mesaData);
-    setPedidos(pedidosData);
-    if (mesaData) setClienteNome(mesaData.nome_cliente || "");
-    setLoading(false);
-  }, [id]);
+  const {
+    data: mesa = null,
+    isLoading: loadingMesa,
+    error: mesaError,
+  } = useQuery({
+    queryKey: ["mesa", id],
+    queryFn: () => fetchMesa(id!),
+    enabled: !!id,
+    placeholderData: (prev) => prev,
+  });
 
-  useEffect(() => { load(); }, [load]);
+  const { data: pedidos = [], isLoading: loadingPedidos } = useQuery({
+    queryKey: ["pedidos-mesa", id],
+    queryFn: () => fetchPedidosDaMesa(id!),
+    enabled: !!id,
+    placeholderData: (prev) => prev,
+  });
+
+  const loading = loadingMesa || loadingPedidos;
+
+  useEffect(() => {
+    if (mesa && !clienteNome) setClienteNome(mesa.nome_cliente || "");
+  }, [mesa]);
 
   // Realtime
   useEffect(() => {
+    if (!id) return;
     const channel = supabase
       .channel(`mesa-${id}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "comanda_pedidos", filter: `mesa_id=eq.${id}` }, () => load())
-      .on("postgres_changes", { event: "*", schema: "public", table: "comanda_mesas", filter: `id=eq.${id}` }, () => load())
+      .on("postgres_changes", { event: "*", schema: "public", table: "comanda_pedidos", filter: `mesa_id=eq.${id}` }, () => {
+        qc.invalidateQueries({ queryKey: ["pedidos-mesa", id] });
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "comanda_mesas", filter: `id=eq.${id}` }, () => {
+        qc.invalidateQueries({ queryKey: ["mesa", id] });
+      })
       .subscribe();
     return () => { supabase.removeChannel(channel); };
-  }, [id, load]);
+  }, [id, qc]);
 
   const handleSaveCliente = async () => {
     if (!mesa) return;
     try {
-      // @ts-ignore
-      const { error } = await (supabase as any)
+      const { error } = await supabase
         .from("comanda_mesas")
         .update({ nome_cliente: clienteNome })
         .eq("id", mesa.id);
@@ -144,7 +216,7 @@ export default function TableDetailScreen() {
     setUpdatingStatus(true);
     try {
       await atualizarStatusMesa(mesa.id, status);
-      await load();
+      qc.invalidateQueries({ queryKey: ["mesa", id] });
       setShowStatusModal(false);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (e) { console.error(e); }
@@ -183,21 +255,20 @@ export default function TableDetailScreen() {
       });
 
       // 2. Limpar histórico: desvincular pedidos da mesa e marcá-los como entregues
-      // @ts-ignore
-      await (supabase as any)
+      await supabase
         .from("comanda_pedidos")
         .update({ mesa_id: null, status: "entregue" })
         .eq("mesa_id", mesa.id)
         .neq("status", "cancelado");
 
       // 3. Liberar mesa e limpar nome do cliente
-      // @ts-ignore
-      await (supabase as any)
+      await supabase
         .from("comanda_mesas")
         .update({ status: "disponivel", nome_cliente: null })
         .eq("id", mesa.id);
       
-      await load();
+      qc.invalidateQueries({ queryKey: ["mesa", id] });
+      qc.invalidateQueries({ queryKey: ["pedidos-mesa", id] });
       setShowPaymentModal(false);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       router.back(); // Voltar para a lista de mesas após o pagamento
@@ -206,6 +277,47 @@ export default function TableDetailScreen() {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     } finally { 
       setUpdatingStatus(false); 
+    }
+  };
+
+  const handleCancelOrder = async () => {
+    if (!orderToCancel || !cancelReason.trim()) return;
+    setUpdatingStatus(true);
+    try {
+      const pedidoCancelado = pedidos.find(p => p.id === orderToCancel);
+      
+      // 1. Atualizar no Supabase
+      const { error } = await supabase
+        .from("comanda_pedidos")
+        .update({ 
+          status: "cancelado", 
+          motivo_cancelamento: cancelReason,
+          cancelado_em: new Date().toISOString()
+        })
+        .eq("id", orderToCancel);
+      if (error) throw error;
+
+      // 2. Disparar Webhook para o Sheets (conforme solicitado)
+      await triggerN8NWebhook("pedido_cancelado", {
+        pedido_id: orderToCancel,
+        mesa_numero: mesa?.numero,
+        restaurante_id: profile?.restaurante_id,
+        mesero_nome: profile?.nome,
+        motivo: cancelReason,
+        total_pedido: pedidoCancelado?.total,
+        itens: pedidoCancelado?.itens.map(i => `${i.quantidade}x ${i.nome_produto}`).join(", ")
+      });
+
+      qc.invalidateQueries({ queryKey: ["pedidos-mesa", id] });
+      setShowCancelModal(false);
+      setOrderToCancel(null);
+      setCancelReason("");
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (e) {
+      console.error(e);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    } finally {
+      setUpdatingStatus(false);
     }
   };
 
@@ -226,10 +338,17 @@ export default function TableDetailScreen() {
     );
   }
 
+  // Sem mesa carregada: pode ser realmente "não encontrada" ou apenas falta de conexão
   if (!mesa) {
+    const isOffline = isNetworkError(mesaError);
     return (
       <View style={[styles.container, styles.centered, { paddingTop: topPadding }]}>
-        <Text style={styles.errorText}>{i18n.tables.notFound}</Text>
+        <Text style={styles.errorText}>
+          {isOffline
+            ? "Sem conexão com o servidor. Conecte-se à internet para carregar os dados desta mesa pela primeira vez."
+            : i18n.tables.notFound}
+        </Text>
+        <Text style={[styles.errorText, { fontSize: 10, marginTop: 10, opacity: 0.5 }]}>ID: {id}</Text>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
           <Text style={styles.backBtnText}>{i18n.common.back}</Text>
         </TouchableOpacity>
@@ -319,11 +438,42 @@ export default function TableDetailScreen() {
               <View key={pedido.id} style={styles.orderCard}>
                 <View style={styles.orderCardHeader}>
                   <View style={styles.orderCardLeft}>
-                    <Text style={styles.orderId}>{i18n.details.orderNumber(pedido.id.slice(-6).toUpperCase())}</Text>
+                    <View style={styles.garcomRow}>
+                      <Ionicons name="person" size={12} color={Colors.amber} />
+                      <Text style={styles.orderId}>{(pedido as any).comanda_usuarios?.nome || "Garçom"}</Text>
+                    </View>
                     <Text style={styles.orderTime}>{timeAgo(pedido.criado_em)}</Text>
                   </View>
-                  <View style={[styles.orderStatusPill, { backgroundColor: pStatusColor + "22" }]}>
-                    <Text style={[styles.orderStatusText, { color: pStatusColor }]}>{pStatusLabel}</Text>
+                  <View style={styles.orderHeaderActions}>
+                    <View style={[styles.orderStatusPill, { backgroundColor: pStatusColor + "22" }]}>
+                      <Text style={[styles.orderStatusText, { color: pStatusColor }]}>{pStatusLabel}</Text>
+                    </View>
+                    <TouchableOpacity 
+                      onPress={() => {
+                        setOrderToCancel(pedido.id);
+                        setShowCancelModal(true);
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                      }}
+                      style={styles.cancelOrderBtn}
+                    >
+                      <Ionicons name="close-circle-outline" size={20} color={Colors.red} />
+                    </TouchableOpacity>
+                    <TouchableOpacity 
+                      onPress={() => {
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                        router.push({ 
+                          pathname: "/order/new", 
+                          params: { 
+                            tableId: mesa.id, 
+                            tableNumber: String(mesa.numero),
+                            orderId: pedido.id 
+                          } 
+                        });
+                      }}
+                      style={styles.editOrderBtn}
+                    >
+                      <Ionicons name="create-outline" size={20} color={Colors.amber} />
+                    </TouchableOpacity>
                   </View>
                 </View>
 
@@ -370,7 +520,7 @@ export default function TableDetailScreen() {
             onPress={() => {
               if (!mesa) return;
               Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-              router.push({ pathname: "/order/new", params: { tableId: mesa.id, tableNumber: mesa.numero } });
+              router.push({ pathname: "/order/new", params: { tableId: mesa.id, tableNumber: String(mesa.numero) } });
             }}
             style={styles.primaryButton}
           >
@@ -435,6 +585,46 @@ export default function TableDetailScreen() {
           </View>
         </TouchableOpacity>
       </Modal>
+
+      {/* Modal de Cancelamento */}
+      <Modal visible={showCancelModal} transparent animationType="fade">
+        <View style={styles.modalOverlayCentered}>
+          <View style={styles.cancelModal}>
+            <Text style={styles.cancelModalTitle}>Cancelar Pedido</Text>
+            <Text style={styles.cancelModalSubtitle}>Por favor, informe o motivo do cancelamento para registro:</Text>
+            
+            <TextInput
+              style={styles.cancelInput}
+              value={cancelReason}
+              onChangeText={setCancelReason}
+              placeholder="Ex: Cliente desistiu / Erro no sistema"
+              placeholderTextColor={Colors.textMuted}
+              multiline
+            />
+
+            <View style={styles.cancelModalButtons}>
+              <TouchableOpacity 
+                onPress={() => { setShowCancelModal(false); setOrderToCancel(null); }}
+                style={styles.cancelModalCancel}
+              >
+                <Text style={styles.cancelModalCancelText}>Voltar</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity 
+                onPress={handleCancelOrder}
+                style={[styles.cancelModalConfirm, !cancelReason.trim() && { opacity: 0.5 }]}
+                disabled={!cancelReason.trim() || updatingStatus}
+              >
+                {updatingStatus ? (
+                  <ActivityIndicator color={Colors.espresso} size="small" />
+                ) : (
+                  <Text style={styles.cancelModalConfirmText}>Confirmar Cancelamento</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -462,6 +652,7 @@ const styles = StyleSheet.create({
   orderCardHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
   orderCardLeft: { gap: 2 },
   orderId: { fontFamily: "Inter_600SemiBold", fontSize: 15, color: Colors.textPrimary },
+  garcomRow: { flexDirection: "row", alignItems: "center", gap: 6 },
   orderTime: { fontFamily: "Inter_400Regular", fontSize: 12, color: Colors.textMuted },
   orderGlobalNotes: {
     flexDirection: "row",
@@ -532,4 +723,28 @@ const styles = StyleSheet.create({
     color: Colors.textPrimary,
     paddingVertical: 4,
   },
+  orderHeaderActions: { flexDirection: "row", alignItems: "center", gap: 10 },
+  cancelOrderBtn: { padding: 4 },
+  editOrderBtn: { padding: 4 },
+  modalOverlayCentered: { flex: 1, backgroundColor: "rgba(0,0,0,0.7)", justifyContent: "center", alignItems: "center", padding: 20 },
+  cancelModal: { backgroundColor: Colors.charcoal, borderRadius: 20, padding: 20, width: "100%", maxWidth: 400, gap: 16 },
+  cancelModalTitle: { fontFamily: "Inter_700Bold", fontSize: 20, color: Colors.textPrimary },
+  cancelModalSubtitle: { fontFamily: "Inter_400Regular", fontSize: 14, color: Colors.textSecondary },
+  cancelInput: { 
+    backgroundColor: Colors.warmDark, 
+    borderRadius: 12, 
+    padding: 14, 
+    fontFamily: "Inter_400Regular", 
+    fontSize: 14, 
+    color: Colors.textPrimary, 
+    borderWidth: 1, 
+    borderColor: Colors.surface,
+    minHeight: 80,
+    textAlignVertical: "top"
+  },
+  cancelModalButtons: { flexDirection: "row", gap: 10, marginTop: 10 },
+  cancelModalCancel: { flex: 1, paddingVertical: 14, alignItems: "center", borderRadius: 12, backgroundColor: Colors.warmDark },
+  cancelModalCancelText: { fontFamily: "Inter_600SemiBold", fontSize: 15, color: Colors.textSecondary },
+  cancelModalConfirm: { flex: 2, paddingVertical: 14, alignItems: "center", borderRadius: 12, backgroundColor: Colors.red },
+  cancelModalConfirmText: { fontFamily: "Inter_600SemiBold", fontSize: 15, color: Colors.espresso },
 });

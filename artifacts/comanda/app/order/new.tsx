@@ -23,6 +23,7 @@ import { formatCurrency } from "../../lib/format";
 import { useAuth } from "../../context/auth";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Alert } from "react-native";
+import { offlineStore } from "../../lib/offline/store";
 
 
 // ─── Tipos Locais ─────────────────────────────────────────────────────────────
@@ -66,8 +67,7 @@ async function criarPedido(data: {
   const total = data.itens.reduce((s, i) => s + i.subtotal, 0);
 
   // 1. Criar pedido
-  // @ts-ignore
-  const { data: pedido, error: errPedido } = await (supabase as any)
+  const { data: pedido, error: errPedido } = await supabase
     .from("comanda_pedidos")
     .insert({
       restaurante_id: data.restaurante_id,
@@ -82,15 +82,13 @@ async function criarPedido(data: {
   if (errPedido) throw errPedido;
 
   // 2. Inserir itens
-  // @ts-ignore
-  const { error: errItens } = await (supabase as any).from("comanda_itens_pedido").insert(
+  const { error: errItens } = await supabase.from("comanda_itens_pedido").insert(
     data.itens.map((i) => ({ pedido_id: (pedido as any).id, restaurante_id: data.restaurante_id, ...i }))
   );
   if (errItens) throw errItens;
 
   // 3. Atualizar status da mesa para "ocupada"
-  // @ts-ignore
-  await (supabase as any).from("comanda_mesas").update({ status: "ocupada" }).eq("id", data.mesa_id);
+  await supabase.from("comanda_mesas").update({ status: "ocupada" }).eq("id", data.mesa_id);
 
   return pedido;
 }
@@ -136,7 +134,7 @@ function MenuItemTile({ item, quantidade, onAdd, onRemove }: {
 
 // ─── Tela Principal ───────────────────────────────────────────────────────────
 export default function NewOrderScreen() {
-  const { tableId, tableNumber } = useLocalSearchParams<{ tableId: string; tableNumber: string }>();
+  const { tableId, tableNumber, orderId } = useLocalSearchParams<{ tableId: string; tableNumber: string; orderId?: string }>();
   const insets = useSafeAreaInsets();
   const queryClient = useQueryClient();
 
@@ -175,8 +173,60 @@ export default function NewOrderScreen() {
     }
   }, [profile?.restaurante_id]);
 
-  useEffect(() => { loadCategorias(); loadProdutos(); }, [loadCategorias, loadProdutos]);
-  useEffect(() => { loadProdutos(selectedCategoria); }, [selectedCategoria, loadProdutos]);
+  const loadExistingOrder = useCallback(async () => {
+    if (!orderId) return;
+    setIsLoading(true);
+    try {
+      // 1. Buscar o pedido
+      const { data: pedido, error: errP } = await supabase
+        .from("comanda_pedidos")
+        .select("*")
+        .eq("id", orderId)
+        .single();
+      if (errP) throw errP;
+      if (pedido.observacoes) setOrderNotes(pedido.observacoes);
+
+      // 2. Buscar os itens
+      const { data: itens, error: errI } = await supabase
+        .from("comanda_itens_pedido")
+        .select("*, comanda_produtos(*, comanda_categorias(nome))")
+        .eq("pedido_id", orderId);
+      if (errI) throw errI;
+
+      // 3. Popular o carrinho
+      const newCart: Record<string, CartItem> = {};
+      itens.forEach((it: any) => {
+        const prod = {
+          ...it.comanda_produtos,
+          categoria_nome: it.comanda_produtos.comanda_categorias?.nome || ""
+        };
+        newCart[it.produto_id] = {
+          produto: prod,
+          quantidade: it.quantidade,
+          observacoes: it.observacoes || ""
+        };
+      });
+      setCart(newCart);
+    } catch (e) {
+      console.error("Erro ao carregar pedido para edição:", e);
+      Alert.alert("Erro", "Não foi possível carregar o pedido para edição.");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [orderId]);
+
+  useEffect(() => { 
+    loadCategorias(); 
+    if (orderId) {
+      loadExistingOrder();
+    } else {
+      loadProdutos();
+    }
+  }, [loadCategorias, loadProdutos, loadExistingOrder, orderId]);
+
+  useEffect(() => { 
+    if (!orderId) loadProdutos(selectedCategoria); 
+  }, [selectedCategoria, loadProdutos, orderId]);
 
   const cartItems = Object.values(cart);
   const cartTotal = cartItems.reduce((s, ci) => s + Number(ci.produto.preco) * ci.quantidade, 0);
@@ -209,17 +259,72 @@ export default function NewOrderScreen() {
 
   const createOrderMutation = useMutation({
     mutationFn: async (orderData: any) => {
-      // 1. Criar pedido no Supabase
-      const { data, error } = await supabase.from("comanda_pedidos").insert({
-        mesa_id: orderData.mesa_id,
-        restaurante_id: orderData.restaurante_id,
-        garcom_id: orderData.garcom_id,
-        observacoes: orderData.observacoes,
-        total: orderData.total,
-        status: "pendente",
-      }).select().single();
+      let data, error;
 
-      if (error) throw error;
+      if (orderId) {
+        // MODO EDIÇÃO
+        // 1. Atualizar o pedido principal
+        const { data: pData, error: pError } = await supabase
+          .from("comanda_pedidos")
+          .update({
+            observacoes: orderData.observacoes,
+            total: orderData.total,
+            atualizado_em: new Date().toISOString()
+          })
+          .eq("id", orderId)
+          .select()
+          .single();
+        
+        data = pData;
+        error = pError;
+
+        if (!error) {
+          // 2. Remover itens antigos
+          await supabase.from("comanda_itens_pedido").delete().eq("pedido_id", orderId);
+        }
+      } else {
+        // MODO NOVO PEDIDO
+        const { data: pData, error: pError } = await supabase.from("comanda_pedidos").insert({
+          mesa_id: orderData.mesa_id,
+          restaurante_id: orderData.restaurante_id,
+          garcom_id: orderData.garcom_id,
+          observacoes: orderData.observacoes,
+          total: orderData.total,
+          status: "pendente",
+        }).select().single();
+        
+        data = pData;
+        error = pError;
+      }
+
+      if (error) {
+        // Se falhar (ex: sem internet), salvar na fila offline
+        const isNetworkError = (error as any).message?.includes("fetch") || !(error as any).status || (error as any).code === "PGRST_FETCH_ERROR";
+        
+        if (isNetworkError) {
+          console.log("[Offline] Detectada falha de rede, salvando pedido offline...");
+          await offlineStore.addToQueue({
+            table: "comanda_pedidos",
+            action: orderId ? "update" : "insert",
+            data: orderId ? {
+              id: orderId,
+              observacoes: orderData.observacoes,
+              total: orderData.total,
+              atualizado_em: new Date().toISOString()
+            } : {
+              mesa_id: orderData.mesa_id,
+              restaurante_id: orderData.restaurante_id,
+              garcom_id: orderData.garcom_id,
+              observacoes: orderData.observacoes,
+              total: orderData.total,
+              status: "pendente",
+            }
+          });
+          
+          return { offline: true };
+        }
+        throw error;
+      }
 
       // 2. Criar itens do pedido
       const itensComPedidoId = orderData.itens.map((item: any) => ({
@@ -231,8 +336,12 @@ export default function NewOrderScreen() {
       const { error: itemsError } = await supabase.from("comanda_itens_pedido").insert(itensComPedidoId);
       if (itemsError) throw itemsError;
 
-      // 3. Notificar n8n (em segundo plano)
-      triggerN8NWebhook("novo_pedido", orderData.webhookData).catch(err => console.error("Erro n8n:", err));
+      // 3. Atualizar mesa para ocupada
+      await supabase.from("comanda_mesas").update({ status: "ocupada" }).eq("id", orderData.mesa_id);
+
+      // 4. Notificar n8n (em segundo plano)
+      const webhookEvent = orderId ? "pedido_alterado" : "novo_pedido";
+      triggerN8NWebhook(webhookEvent, orderData.webhookData).catch(err => console.error("Erro n8n:", err));
 
       return data;
     },
@@ -243,22 +352,24 @@ export default function NewOrderScreen() {
       // Snapshot do valor anterior
       const previousDetails = queryClient.getQueryData(["mesa-detalhes", tableId]);
 
-      // Update otimista (simulando que o pedido já entrou na lista da mesa)
-      queryClient.setQueryData(["mesa-detalhes", tableId], (old: any) => {
-        if (!old) return old;
-        return {
-          ...old,
-          comanda_pedidos: [
-            ...(old.comanda_pedidos || []),
-            { 
-              id: "temp-id-" + Date.now(), 
-              status: "pendente", 
-              created_at: new Date().toISOString(),
-              total: cartTotal 
-            }
-          ]
-        };
-      });
+      // Update otimista (apenas se for novo pedido, para simplificar)
+      if (!orderId) {
+        queryClient.setQueryData(["mesa-detalhes", tableId], (old: any) => {
+          if (!old) return old;
+          return {
+            ...old,
+            comanda_pedidos: [
+              ...(old.comanda_pedidos || []),
+              { 
+                id: "temp-id-" + Date.now(), 
+                status: "pendente", 
+                created_at: new Date().toISOString(),
+                total: cartTotal 
+              }
+            ]
+          };
+        });
+      }
 
       return { previousDetails };
     },
@@ -274,9 +385,18 @@ export default function NewOrderScreen() {
       queryClient.invalidateQueries({ queryKey: ["mesa-detalhes", tableId] });
       queryClient.invalidateQueries({ queryKey: ["kitchen-orders"] });
     },
-    onSuccess: () => {
+    onSuccess: (data: any) => {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      router.back();
+      
+      if (data?.offline) {
+        Alert.alert(
+          "Pedido Salvo Offline", 
+          "Você está sem internet ou o servidor está instável. O pedido foi salvo no dispositivo e será enviado assim que a conexão voltar.",
+          [{ text: "Entendido", onPress: () => router.back() }]
+        );
+      } else {
+        router.back();
+      }
     }
   });
 
@@ -337,12 +457,12 @@ export default function NewOrderScreen() {
           <TouchableOpacity onPress={() => setShowCart(false)} style={styles.backButton}>
             <Ionicons name="chevron-back" size={22} color={Colors.textPrimary} />
           </TouchableOpacity>
-          <Text style={styles.title}>{i18n.details.checkOrder}</Text>
+          <Text style={styles.title}>{orderId ? "Editar Pedido" : i18n.details.checkOrder}</Text>
           <View style={{ width: 38 }} />
         </View>
 
         <ScrollView style={styles.flex} contentContainerStyle={styles.cartContent}>
-          <Text style={styles.cartMesa}>{i18n.tables.tableName(Number(tableNumber))}</Text>
+          <Text style={styles.cartMesa}>{tableNumber ? i18n.tables.tableName(Number(tableNumber)) : i18n.tables.title}</Text>
           {cartItems.map((ci) => (
             <View key={ci.produto.id} style={styles.cartRow}>
               <View style={styles.qtyControl}>
@@ -414,7 +534,7 @@ export default function NewOrderScreen() {
         </TouchableOpacity>
         <View style={styles.headerCenter}>
           <Text style={styles.title}>{i18n.details.newOrder}</Text>
-          <Text style={styles.subtitle}>{i18n.tables.tableName(Number(tableNumber))}</Text>
+          <Text style={styles.subtitle}>{tableNumber ? i18n.tables.tableName(Number(tableNumber)) : ""}</Text>
         </View>
         {cartCount > 0 ? (
           <TouchableOpacity onPress={() => setShowCart(true)} style={styles.cartButton}>

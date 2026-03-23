@@ -26,7 +26,7 @@ import { i18n } from "../../constants/i18n";
 import { useAuth } from "../../context/auth";
 import ProductSkeleton from "../../components/ProductSkeleton";
 import Animated, { FadeInDown, LinearTransition } from "react-native-reanimated";
-import { useRouter, useLocalSearchParams } from "expo-router";
+import { useRouter, useLocalSearchParams, router } from "expo-router";
 
 
 
@@ -73,8 +73,7 @@ async function criarProduto(restauranteId: string, data: {
 }
 
 async function criarCategoria(restauranteId: string, nome: string) {
-  // @ts-ignore
-  const { error } = await (supabase as any).from("comanda_categorias").insert({
+  const { error } = await supabase.from("comanda_categorias").insert({
     restaurante_id: restauranteId,
     nome,
     ordem: 99,
@@ -83,8 +82,7 @@ async function criarCategoria(restauranteId: string, nome: string) {
 }
 
 async function atualizarCategoria(id: string, nome: string) {
-  // @ts-ignore
-  const { error } = await (supabase as any)
+  const { error } = await supabase
     .from("comanda_categorias")
     .update({ nome })
     .eq("id", id);
@@ -92,8 +90,7 @@ async function atualizarCategoria(id: string, nome: string) {
 }
 
 async function excluirCategoria(id: string) {
-  // @ts-ignore
-  const { error } = await (supabase as any)
+  const { error } = await supabase
     .from("comanda_categorias")
     .delete()
     .eq("id", id);
@@ -101,8 +98,7 @@ async function excluirCategoria(id: string) {
 }
 
 async function toggleDisponivel(id: string, disponivel: boolean) {
-  // @ts-ignore
-  const { error } = await (supabase as any)
+  const { error } = await supabase
     .from("comanda_produtos")
     .update({ disponivel })
     .eq("id", id);
@@ -110,8 +106,7 @@ async function toggleDisponivel(id: string, disponivel: boolean) {
 }
 
 async function atualizarProduto(id: string, data: any) {
-  // @ts-ignore
-  const { error } = await (supabase as any)
+  const { error } = await supabase
     .from("comanda_produtos")
     .update(data)
     .eq("id", id);
@@ -119,8 +114,7 @@ async function atualizarProduto(id: string, data: any) {
 }
 
 async function excluirProduto(id: string) {
-  // @ts-ignore
-  const { error } = await (supabase as any)
+  const { error } = await supabase
     .from("comanda_produtos")
     .delete()
     .eq("id", id);
@@ -206,18 +200,6 @@ export default function MenuScreen() {
   const { profile } = useAuth();
   const params = useLocalSearchParams<{ editId?: string }>();
 
-  // Efeito para abrir edição vindo da tela de detalhes
-  useEffect(() => {
-    if (params.editId && produtos.length > 0 && !editingProduto && !showAddModal) {
-      const p = produtos.find(item => item.id === params.editId);
-      if (p) {
-        handleEditPress(p);
-        // Limpa o parâmetro para não reabrir
-        router.setParams({ editId: undefined });
-      }
-    }
-  }, [params.editId, produtos, editingProduto, showAddModal, qc]);
-
   const { data: categorias = [] } = useQuery({
     queryKey: ["categorias", profile?.restaurante_id],
     queryFn: () => fetchCategorias(profile?.restaurante_id || ""),
@@ -229,6 +211,18 @@ export default function MenuScreen() {
     queryFn: () => fetchProdutos(profile?.restaurante_id || "", selectedCategoria),
     enabled: !!profile?.restaurante_id,
   });
+
+  // Efeito para abrir edição vindo da tela de detalhes
+  useEffect(() => {
+    if (params.editId && produtos.length > 0 && !editingProduto && !showAddModal) {
+      const p = produtos.find(item => item.id === params.editId);
+      if (p) {
+        handleEditPress(p);
+        // Limpa o parâmetro para não reabrir
+        router.setParams({ editId: undefined });
+      }
+    }
+  }, [params.editId, produtos, editingProduto, showAddModal, qc]);
 
   // Mutação para salvar/atualizar produto
   const saveMutation = useMutation({

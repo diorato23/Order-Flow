@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import {
   View,
   Text,
@@ -20,7 +20,6 @@ import { triggerN8NWebhook } from "../../lib/n8n";
 
 import supabase from "../../lib/supabase/client";
 import { useAuth } from "../../context/auth";
-import { useEffect } from "react";
 
 type OrderStatus = "pendente" | "preparando" | "pronto" | "entregue" | "cancelado";
 
@@ -40,13 +39,16 @@ interface Order {
   total: number;
   notes?: string;
   createdAt: string;
+  preparandoEm?: string;
+  prontoEm?: string;
   garcomId: string | null;
+  garcomNome?: string;
 }
 
 async function fetchKitchenOrders(restauranteId: string) {
   const { data, error } = await supabase
     .from("comanda_pedidos")
-    .select("*, comanda_mesas(numero), comanda_itens_pedido(*)")
+    .select("*, comanda_mesas(numero), comanda_usuarios(nome), comanda_itens_pedido(*)")
     .eq("restaurante_id", restauranteId)
     .neq("status", "entregue")
     .neq("status", "cancelado")
@@ -61,7 +63,10 @@ async function fetchKitchenOrders(restauranteId: string) {
     total: o.total,
     notes: o.observacoes,
     createdAt: o.criado_em,
+    preparandoEm: (o as any).preparando_em,
+    prontoEm: (o as any).pronto_em,
     garcomId: o.garcom_id,
+    garcomNome: o.comanda_usuarios?.nome || "Garçom",
     items: (o.comanda_itens_pedido || []).map((i: any) => ({
       id: i.id,
       menuItemName: i.nome_produto,
@@ -73,9 +78,17 @@ async function fetchKitchenOrders(restauranteId: string) {
 }
 
 async function updateOrderStatus(id: string, status: OrderStatus) {
-  const { error } = await (supabase as any)
+  const updateData: any = { status: status };
+  
+  if (status === "preparando") {
+    updateData.preparando_em = new Date().toISOString();
+  } else if (status === "pronto") {
+    updateData.pronto_em = new Date().toISOString();
+  }
+
+  const { error } = await supabase
     .from("comanda_pedidos")
-    .update({ status: status } as any)
+    .update(updateData)
     .eq("id", id);
   if (error) throw error;
   return { success: true };
@@ -88,7 +101,16 @@ function timeAgo(dateStr: string) {
   return `${Math.floor(diff / 3600)}h`;
 }
 
-const OrderCard = React.memo(({ order, onStatusChange }: { order: Order; onStatusChange: (id: string, status: OrderStatus) => void }) => {
+function OrderCard({ order, onStatusChange }: { order: Order; onStatusChange: (id: string, status: OrderStatus) => void }) {
+  const [now, setNow] = useState(Date.now());
+
+  useEffect(() => {
+    if (order.status === "preparando") {
+      const timer = setInterval(() => setNow(Date.now()), 10000);
+      return () => clearInterval(timer);
+    }
+  }, [order.status]);
+
   const statusColor = Colors.statusColors[order.status];
   
   const nextStatus: Record<OrderStatus, OrderStatus | null> = {
@@ -119,6 +141,10 @@ const OrderCard = React.memo(({ order, onStatusChange }: { order: Order; onStatu
           </View>
         </View>
         <View style={styles.orderHeaderRight}>
+          <View style={styles.garcomBadge}>
+            <Ionicons name="person-outline" size={10} color={Colors.textMuted} />
+            <Text style={styles.garcomName}>{order.garcomNome}</Text>
+          </View>
           <Ionicons name="time-outline" size={12} color={Colors.textMuted} />
           <Text style={styles.timeAgo}>{timeAgo(order.createdAt)}</Text>
         </View>
@@ -147,6 +173,24 @@ const OrderCard = React.memo(({ order, onStatusChange }: { order: Order; onStatu
         </View>
       ) : null}
 
+      {order.status === "preparando" && order.preparandoEm ? (
+        <View style={[styles.prepTimeSummary, { backgroundColor: Colors.amber + "22" }]}>
+          <Ionicons name="timer-outline" size={12} color={Colors.amber} />
+          <Text style={[styles.prepTimeSummaryText, { color: Colors.amber }]}>
+            Preparando há: {Math.floor((now - new Date(order.preparandoEm).getTime()) / 60000)} min
+          </Text>
+        </View>
+      ) : null}
+
+      {order.status === "pronto" && order.preparandoEm && order.prontoEm ? (
+        <View style={styles.prepTimeSummary}>
+          <Ionicons name="timer-outline" size={12} color={Colors.green} />
+          <Text style={styles.prepTimeSummaryText}>
+            Tempo de preparo: {Math.floor((new Date(order.prontoEm).getTime() - new Date(order.preparandoEm).getTime()) / 60000)} min
+          </Text>
+        </View>
+      ) : null}
+
       {next ? (
         <TouchableOpacity
           onPress={() => {
@@ -165,7 +209,7 @@ const OrderCard = React.memo(({ order, onStatusChange }: { order: Order; onStatu
       ) : null}
     </View>
   );
-});
+}
 
 export default function KitchenScreen() {
   const insets = useSafeAreaInsets();
@@ -180,7 +224,8 @@ export default function KitchenScreen() {
     queryKey: ["kitchen-orders", profile?.restaurante_id],
     queryFn: () => fetchKitchenOrders(profile?.restaurante_id || ""),
     enabled: !!profile?.restaurante_id,
-    refetchInterval: 30000, // Aumentado pois o Realtime fará o trabalho pesado
+    placeholderData: (prev) => prev,
+    refetchInterval: 30000,
   });
 
   // ─── Realtime Sync ─────────────────────────────────────────────────────────
@@ -503,6 +548,17 @@ const styles = StyleSheet.create({
     marginTop: 2,
     fontStyle: "italic",
   },
+  garcomBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    marginRight: 8,
+  },
+  garcomName: {
+    fontFamily: "Inter_500Medium",
+    fontSize: 11,
+    color: Colors.textMuted,
+  },
   orderNotes: {
     flexDirection: "row",
     alignItems: "flex-start",
@@ -513,10 +569,22 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   orderNotesText: {
-    fontFamily: "Inter_400Regular",
-    fontSize: 13,
     color: Colors.textSecondary,
     flex: 1,
+  },
+  prepTimeSummary: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: Colors.warmDark,
+    borderRadius: 8,
+    padding: 8,
+    marginBottom: 12,
+  },
+  prepTimeSummaryText: {
+    fontFamily: "Inter_500Medium",
+    fontSize: 12,
+    color: Colors.green,
   },
   actionButton: {
     flexDirection: "row",

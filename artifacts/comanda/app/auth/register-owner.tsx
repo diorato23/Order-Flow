@@ -63,7 +63,7 @@ export default function RegisterOwnerScreen() {
       if (!authData.user) throw new Error("Erro ao criar usuário.");
 
       // 2. Criar Restaurante
-      const { data: restData, error: restError } = await (supabase as any)
+      const { data: restData, error: restError } = await supabase
         .from("comanda_restaurantes")
         .insert({
           nome: nomeRestaurante,
@@ -77,7 +77,7 @@ export default function RegisterOwnerScreen() {
       if (restError) throw restError;
 
       // 3. Criar Perfil do Usuário (Dono/Admin)
-      const { error: userError } = await (supabase as any)
+      const { error: userError } = await supabase
         .from("comanda_usuarios")
         .insert({
           nome: nomeDono,

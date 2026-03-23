@@ -52,16 +52,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   async function fetchProfile(userId: string) {
     try {
+      console.log("Iniciando busca de perfil para UID:", userId);
       const { data, error } = await (supabase as any)
         .from("comanda_usuarios")
         .select("*")
         .eq("auth_user_id", userId)
         .maybeSingle();
 
-      if (error) throw error;
+      if (error) {
+        console.error("Erro na query do perfil:", error);
+        throw error;
+      }
+      console.log("Perfil carregado com sucesso:", data);
       setProfile(data);
     } catch (e) {
-      console.error("Erro ao carregar perfil:", e);
+      console.error("Erro fatal ao carregar perfil:", e);
     } finally {
       setLoading(false);
     }

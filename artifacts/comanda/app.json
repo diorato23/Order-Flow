@@ -21,7 +21,6 @@
       "package": "com.ktuche.comanda",
       "backgroundColor": "#1A0F0A",
       "adaptiveIcon": {
-        "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#1A0F0A"
       }
     },

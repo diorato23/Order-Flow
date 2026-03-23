@@ -35,7 +35,7 @@ export default function RegisterEmployeeScreen() {
     if (!inviteCode) return;
     setLoading(true);
     try {
-      const { data, error } = await (supabase as any)
+      const { data, error } = await supabase
         .from("comanda_convites")
         .select("*, comanda_restaurantes(nome)")
         .eq("codigo", inviteCode.trim())
@@ -73,7 +73,7 @@ export default function RegisterEmployeeScreen() {
       if (authError) throw authError;
 
       // 2. Criar Perfil de Usuário
-      const { error: userError } = await (supabase as any)
+      const { error: userError } = await supabase
         .from("comanda_usuarios")
         .insert({
           nome,
@@ -86,7 +86,7 @@ export default function RegisterEmployeeScreen() {
       if (userError) throw userError;
 
       // 3. Marcar convite como usado
-      await (supabase as any)
+      await supabase
         .from("comanda_convites")
         .update({ usado: true })
         .eq("id", inviteData.id);

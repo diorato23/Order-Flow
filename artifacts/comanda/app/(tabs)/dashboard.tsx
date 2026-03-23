@@ -19,7 +19,7 @@ import supabase from "../../lib/supabase/client";
 import { triggerN8NWebhook } from "../../lib/n8n";
 import { i18n } from "../../constants/i18n";
 import { formatCurrency } from "../../lib/format";
-
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "../../context/auth";
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
@@ -35,7 +35,7 @@ interface Stats {
 
 // ─── Query Supabase ──────────────────────────────────────────────────────────
 async function fetchStats(restauranteId: string): Promise<Stats> {
-  const { data, error } = await (supabase as any).rpc("comanda_stats", {
+  const { data, error } = await supabase.rpc("comanda_stats", {
     p_restaurante_id: restauranteId,
   });
   if (error) throw error;
@@ -78,30 +78,22 @@ const TopProductItem = React.memo(({ item, index }: {
 // ─── Tela Principal ────────────────────────────────────────────────────────────
 export default function DashboardScreen() {
   const insets = useSafeAreaInsets();
-  const [stats, setStats] = useState<Stats | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const { profile, signOut } = useAuth();
+  const qc = useQueryClient();
+
   const [showCloseModal, setShowCloseModal] = useState(false);
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [inviteCode, setInviteCode] = useState("");
   const [isClosing, setIsClosing] = useState(false);
   const topPadding = Platform.OS === "web" ? 67 : insets.top;
 
-  const { profile, signOut } = useAuth();
-
-  const load = useCallback(async () => {
-    if (!profile?.restaurante_id) return;
-    setIsLoading(true);
-    try {
-      const data = await fetchStats(profile.restaurante_id);
-      setStats(data);
-    } catch (e) {
-      console.error("Erro ao carregar estatísticas:", e);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [profile?.restaurante_id]);
-
-  useEffect(() => { load(); }, [load]);
+  const { data: stats = null, isLoading, isError } = useQuery({
+    queryKey: ["dashboard-stats", profile?.restaurante_id],
+    queryFn: () => fetchStats(profile?.restaurante_id || ""),
+    enabled: !!profile?.restaurante_id,
+    placeholderData: (previousData) => previousData,
+    retry: 1,
+  });
 
   // ─── Realtime Sync ─────────────────────────────────────────────────────────
   useEffect(() => {
@@ -119,7 +111,7 @@ export default function DashboardScreen() {
           filter: `restaurante_id=eq.${profile.restaurante_id}`,
         },
         () => {
-          load(); // Recarrega estatísticas ao mudar qualquer pedido
+          qc.invalidateQueries({ queryKey: ["dashboard-stats"] });
         }
       )
       .on(
@@ -131,7 +123,7 @@ export default function DashboardScreen() {
           filter: `restaurante_id=eq.${profile.restaurante_id}`,
         },
         () => {
-          load(); // Recarrega estatísticas ao mudar status de mesa
+          qc.invalidateQueries({ queryKey: ["dashboard-stats"] });
         }
       )
       .subscribe();
@@ -139,7 +131,7 @@ export default function DashboardScreen() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [profile?.restaurante_id, load]);
+  }, [profile?.restaurante_id, qc]);
 
 
 
@@ -196,8 +188,7 @@ export default function DashboardScreen() {
     setIsClosing(true);
     try {
       const codigo = Math.random().toString(36).substring(2, 8).toUpperCase();
-      // @ts-ignore
-      const { error } = await (supabase as any).from("comanda_convites").insert({
+      const { error } = await supabase.from("comanda_convites").insert({
         restaurante_id: profile.restaurante_id,
         codigo: codigo,
         usado: false,
@@ -226,7 +217,10 @@ export default function DashboardScreen() {
         </View>
         <View style={styles.headerRight}>
           <TouchableOpacity
-            onPress={() => { load(); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); }}
+            onPress={() => { 
+              qc.invalidateQueries({ queryKey: ["dashboard-stats"] }); 
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); 
+            }}
             style={styles.iconButton}
           >
             <Ionicons name="refresh-outline" size={20} color={Colors.textSecondary} />
