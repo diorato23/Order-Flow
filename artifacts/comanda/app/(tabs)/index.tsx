@@ -273,6 +273,18 @@ export default function TablesScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   }, []);
 
+  const renderTableItem = useCallback(({ item, index }: { item: Mesa; index: number }) => (
+    <TableCard
+      mesa={item}
+      index={index}
+      onPress={() => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        router.push(`/table/${item.id}`);
+      }}
+      onEdit={() => handleEditPress(item)}
+    />
+  ), [handleEditPress, router]);
+
   const filtered = useMemo(
     () => filter === "all" ? mesas : mesas.filter((t) => t.status === filter),
     [mesas, filter]
@@ -380,17 +392,7 @@ export default function TablesScreen() {
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.amber} />
           }
-          renderItem={useCallback(({ item, index }: { item: Mesa; index: number }) => (
-            <TableCard
-              mesa={item}
-              index={index}
-              onPress={() => {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                router.push(`/table/${item.id}`);
-              }}
-              onEdit={() => handleEditPress(item)}
-            />
-          ), [handleEditPress])}
+          renderItem={renderTableItem}
         />
       )}
 
