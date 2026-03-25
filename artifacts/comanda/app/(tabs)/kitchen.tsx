@@ -298,6 +298,13 @@ export default function KitchenScreen() {
     [orders, filterStatus]
   );
 
+  const renderOrderItem = useCallback(({ item }: { item: Order }) => (
+    <OrderCard
+      order={item}
+      onStatusChange={(id, status) => statusMutation.mutate({ id, status })}
+    />
+  ), [statusMutation]);
+
   const statusFilters: Array<{ key: OrderStatus | "all"; label: string; count?: number }> = [
     { key: "all", label: i18n.kitchen.filterAll, count: orders.length },
     { key: "pendente", label: i18n.kitchen.filterPending, count: counts.pendente },
@@ -376,12 +383,7 @@ export default function KitchenScreen() {
           maxToRenderPerBatch={10}
           windowSize={5}
           initialNumToRender={5}
-          renderItem={useCallback(({ item }: { item: Order }) => (
-            <OrderCard
-              order={item}
-              onStatusChange={(id, status) => statusMutation.mutate({ id, status })}
-            />
-          ), [statusMutation])}
+          renderItem={renderOrderItem}
         />
       )}
     </View>
