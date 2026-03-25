@@ -16,17 +16,20 @@ import Colors from '@/constants/colors';
 import { i18n } from '@/constants/i18n';
 import { useQuery } from '@tanstack/react-query';
 import supabase from '@/lib/supabase/client';
+import type { Produto } from '@/lib/supabase/types';
 
 const { width } = Dimensions.get('window');
 
-async function fetchProduto(id: string) {
+type ProdutoDetalhes = Produto & { comanda_categorias: { nome: string } | null };
+
+async function fetchProduto(id: string): Promise<ProdutoDetalhes> {
   const { data, error } = await supabase
     .from('comanda_produtos')
     .select('*, comanda_categorias(nome)')
     .eq('id', id)
     .single();
   if (error) throw error;
-  return data;
+  return data as unknown as ProdutoDetalhes;
 }
 
 export default function ProductDetailsScreen() {
@@ -55,10 +58,8 @@ export default function ProductDetailsScreen() {
       <ScrollView bounces={false} contentContainerStyle={{ paddingBottom: 40 }}>
         {/* Imagem com Shared Transition */}
         <Animated.Image 
-          source={{ uri: "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?q=80&w=600&auto=format&fit=crop" }} 
+          source={{ uri: produto?.imagem_url || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?q=80&w=600&auto=format&fit=crop" }} 
           style={styles.image}
-          // @ts-ignore
-          sharedTransitionTag={`product-img-${id}`}
         />
 
         {/* Header Flutuante */}

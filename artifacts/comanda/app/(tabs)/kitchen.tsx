@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from "react";
+import React, { useState, useCallback, useEffect, useMemo } from "react";
 import {
   View,
   Text,
@@ -7,7 +7,6 @@ import {
   FlatList,
   RefreshControl,
   Platform,
-  ActivityIndicator,
   ScrollView,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -20,6 +19,7 @@ import { triggerN8NWebhook } from "../../lib/n8n";
 
 import supabase from "../../lib/supabase/client";
 import { useAuth } from "../../context/auth";
+import OrderSkeleton from "../../components/OrderSkeleton";
 
 type OrderStatus = "pendente" | "preparando" | "pronto" | "entregue" | "cancelado";
 
@@ -63,8 +63,8 @@ async function fetchKitchenOrders(restauranteId: string) {
     total: o.total,
     notes: o.observacoes,
     createdAt: o.criado_em,
-    preparandoEm: (o as any).preparando_em,
-    prontoEm: (o as any).pronto_em,
+    preparandoEm: o.preparando_em,
+    prontoEm: o.pronto_em,
     garcomId: o.garcom_id,
     garcomNome: o.comanda_usuarios?.nome || "Garçom",
     items: (o.comanda_itens_pedido || []).map((i: any) => ({
@@ -78,7 +78,7 @@ async function fetchKitchenOrders(restauranteId: string) {
 }
 
 async function updateOrderStatus(id: string, status: OrderStatus) {
-  const updateData: any = { status: status };
+  const updateData: Record<string, string> = { status: status };
   
   if (status === "preparando") {
     updateData.preparando_em = new Date().toISOString();
@@ -88,7 +88,7 @@ async function updateOrderStatus(id: string, status: OrderStatus) {
 
   const { error } = await supabase
     .from("comanda_pedidos")
-    .update(updateData)
+    .update(updateData as Record<string, string>)
     .eq("id", id);
   if (error) throw error;
   return { success: true };
@@ -101,7 +101,7 @@ function timeAgo(dateStr: string) {
   return `${Math.floor(diff / 3600)}h`;
 }
 
-function OrderCard({ order, onStatusChange }: { order: Order; onStatusChange: (id: string, status: OrderStatus) => void }) {
+const OrderCard = React.memo(function OrderCard({ order, onStatusChange }: { order: Order; onStatusChange: (id: string, status: OrderStatus) => void }) {
   const [now, setNow] = useState(Date.now());
 
   useEffect(() => {
@@ -198,6 +198,8 @@ function OrderCard({ order, onStatusChange }: { order: Order; onStatusChange: (i
             onStatusChange(order.id, next);
           }}
           style={[styles.actionButton, { backgroundColor: statusColor }]}
+          accessibilityRole="button"
+          accessibilityLabel={`${nextStatusLabel[order.status]} - ${i18n.tables.tableName(order.tableNumber)}`}
         >
           <Ionicons
             name={next === "preparando" ? "flame" : next === "pronto" ? "checkmark-circle" : "checkmark-done-circle"}
@@ -209,7 +211,7 @@ function OrderCard({ order, onStatusChange }: { order: Order; onStatusChange: (i
       ) : null}
     </View>
   );
-}
+});
 
 export default function KitchenScreen() {
   const insets = useSafeAreaInsets();
@@ -232,7 +234,7 @@ export default function KitchenScreen() {
   useEffect(() => {
     if (!profile?.restaurante_id) return;
 
-    console.log("[DEBUG] Ativando Realtime Cozinha para:", profile.restaurante_id);
+    if (__DEV__) console.log("[DEBUG] Ativando Realtime Cozinha para:", profile.restaurante_id);
 
     const channel = supabase
       .channel("kitchen-realtime")
@@ -245,7 +247,7 @@ export default function KitchenScreen() {
           filter: `restaurante_id=eq.${profile.restaurante_id}`,
         },
         (payload) => {
-          console.log("[DEBUG] Mudança detectada na cozinha:", payload.eventType);
+          if (__DEV__) console.log("[DEBUG] Mudança detectada na cozinha:", payload.eventType);
           qc.invalidateQueries({ queryKey: ["kitchen-orders"] });
           Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         }
@@ -285,13 +287,16 @@ export default function KitchenScreen() {
     setRefreshing(false);
   }, [qc]);
 
-  const filtered = filterStatus === "all" ? orders : orders.filter((o) => o.status === filterStatus);
-
-  const counts = {
+  const counts = useMemo(() => ({
     pendente: orders.filter((o) => o.status === "pendente").length,
     preparando: orders.filter((o) => o.status === "preparando").length,
     pronto: orders.filter((o) => o.status === "pronto").length,
-  };
+  }), [orders]);
+
+  const filtered = useMemo(
+    () => filterStatus === "all" ? orders : orders.filter((o) => o.status === filterStatus),
+    [orders, filterStatus]
+  );
 
   const statusFilters: Array<{ key: OrderStatus | "all"; label: string; count?: number }> = [
     { key: "all", label: i18n.kitchen.filterAll, count: orders.length },
@@ -328,6 +333,9 @@ export default function KitchenScreen() {
                 Haptics.selectionAsync();
               }}
               style={[styles.filterChip, filterStatus === f.key && styles.filterChipActive]}
+              accessibilityRole="button"
+              accessibilityLabel={`${f.label} ${f.count ?? 0}`}
+              accessibilityState={{ selected: filterStatus === f.key }}
             >
               <Text style={[styles.filterText, filterStatus === f.key && styles.filterTextActive]}>
                 {f.label}
@@ -345,9 +353,7 @@ export default function KitchenScreen() {
       </View>
 
       {isLoading ? (
-        <View style={styles.loading}>
-          <ActivityIndicator color={Colors.amber} size="large" />
-        </View>
+        <OrderSkeleton count={3} />
       ) : filtered.length === 0 ? (
         <View style={styles.empty}>
           <Ionicons name="flame-outline" size={52} color={Colors.textMuted} />
@@ -370,12 +376,12 @@ export default function KitchenScreen() {
           maxToRenderPerBatch={10}
           windowSize={5}
           initialNumToRender={5}
-          renderItem={({ item }) => (
+          renderItem={useCallback(({ item }: { item: Order }) => (
             <OrderCard
               order={item}
               onStatusChange={(id, status) => statusMutation.mutate({ id, status })}
             />
-          )}
+          ), [statusMutation])}
         />
       )}
     </View>

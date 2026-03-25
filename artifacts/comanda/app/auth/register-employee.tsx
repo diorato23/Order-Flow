@@ -62,6 +62,17 @@ export default function RegisterEmployeeScreen() {
       return;
     }
 
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email.trim())) {
+      Alert.alert(i18n.common.error, "E-mail inválido.");
+      return;
+    }
+
+    if (senha.length < 8) {
+      Alert.alert(i18n.common.error, "A senha deve ter no mínimo 8 caracteres.");
+      return;
+    }
+
     setLoading(true);
     try {
       // 1. Criar Auth
@@ -79,7 +90,7 @@ export default function RegisterEmployeeScreen() {
           nome,
           restaurante_id: inviteData.restaurante_id,
           auth_user_id: authData.user?.id,
-          funcao: inviteData.funcao || "mesero",
+          funcao: inviteData.funcao || "garcom",
           ativo: true,
         });
 

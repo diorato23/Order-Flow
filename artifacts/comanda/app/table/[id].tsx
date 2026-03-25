@@ -21,18 +21,11 @@ import { triggerN8NWebhook } from "../../lib/n8n";
 import { formatCurrency } from "../../lib/format";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import supabase from "../../lib/supabase/client";
+import type { Mesa, MesaStatus } from "../../lib/supabase/types";
 import { useAuth } from "../../context/auth";
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
-type MesaStatus = "disponivel" | "ocupada" | "reservada" | "limpeza";
 
-interface Mesa {
-  id: string;
-  numero: number;
-  status: MesaStatus;
-  capacidade: number;
-  nome_cliente?: string;
-}
 
 interface ItemPedido {
   id: number;
@@ -60,9 +53,9 @@ type PedidoComItens = Pedido & { itens: ItemPedido[] };
 // ─── Queries Supabase ─────────────────────────────────────────────────────────
 function isNetworkError(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
-  const err = error as any;
-  const message: string = err.message || "";
-  const code: string | undefined = err.code;
+  const err = error as Record<string, unknown>;
+  const message = String(err.message ?? "");
+  const code: string | undefined = err.code as string | undefined;
   const status = err.status;
 
   return (
@@ -96,22 +89,16 @@ async function fetchMesa(id: string): Promise<Mesa | null> {
 async function fetchPedidosDaMesa(mesaId: string): Promise<PedidoComItens[]> {
   const { data: pedidos, error } = await supabase
     .from("comanda_pedidos")
-    .select("*, comanda_usuarios(nome)")
+    .select("*, comanda_usuarios(nome), comanda_itens_pedido(*)")
     .eq("mesa_id", mesaId)
     .not("status", "eq", "cancelado")
     .order("criado_em", { ascending: false });
   if (error || !pedidos) return [];
 
-  const pedidosComItens = await Promise.all(
-    (pedidos as any[]).map(async (p) => {
-      const { data: itens } = await supabase
-        .from("comanda_itens_pedido")
-        .select("*")
-        .eq("pedido_id", p.id);
-      return { ...p, itens: itens ?? [] };
-    })
-  );
-  return pedidosComItens;
+  return pedidos.map((p: any) => ({
+    ...p,
+    itens: p.comanda_itens_pedido ?? [],
+  }));
 }
 
 async function atualizarStatusMesa(id: string, status: MesaStatus) {
@@ -440,7 +427,7 @@ export default function TableDetailScreen() {
                   <View style={styles.orderCardLeft}>
                     <View style={styles.garcomRow}>
                       <Ionicons name="person" size={12} color={Colors.amber} />
-                      <Text style={styles.orderId}>{(pedido as any).comanda_usuarios?.nome || "Garçom"}</Text>
+                      <Text style={styles.orderId}>{pedido.comanda_usuarios?.nome || "Garçom"}</Text>
                     </View>
                     <Text style={styles.orderTime}>{timeAgo(pedido.criado_em)}</Text>
                   </View>

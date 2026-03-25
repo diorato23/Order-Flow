@@ -3,6 +3,7 @@ import * as Device from 'expo-device';
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 import supabase from './supabase/client';
+import type { Database } from './supabase/types';
 
 // Configuração básica do comportamento da notificação (quando o app está aberto)
 Notifications.setNotificationHandler({
@@ -10,7 +11,9 @@ Notifications.setNotificationHandler({
     shouldShowAlert: true,
     shouldPlaySound: true,
     shouldSetBadge: false,
-  } as any),
+    shouldShowBanner: true,
+    shouldShowList: true,
+  }),
 });
 
 export async function registerForPushNotificationsAsync() {
@@ -68,9 +71,10 @@ export async function registerForPushNotificationsAsync() {
 export async function updatePushTokenInSupabase(userId: string, token: string) {
   if (!userId || !token) return;
   
+  const updateData: Database['public']['Tables']['comanda_usuarios']['Update'] = { push_token: token };
   const { error } = await supabase
     .from('comanda_usuarios')
-    .update({ push_token: token } as any)
+    .update(updateData)
     .eq('auth_user_id', userId);
 
   if (error) {

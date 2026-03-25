@@ -74,8 +74,8 @@ function SwipeableTabLayout() {
 
     const idx = tabs.findIndex(t => {
       // Ajuste para rota raiz do grupo
-      if (t.name === "index") return currentSegment === "(tabs)" || (currentSegment as any) === "index";
-      return (t.name as any) === currentSegment;
+      if (t.name === "index") return currentSegment === "(tabs)" || currentSegment === "index";
+      return t.name === currentSegment;
     });
     return idx === -1 ? 0 : idx;
   }, [segments, tabs]);

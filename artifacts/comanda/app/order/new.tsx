@@ -83,7 +83,7 @@ async function criarPedido(data: {
 
   // 2. Inserir itens
   const { error: errItens } = await supabase.from("comanda_itens_pedido").insert(
-    data.itens.map((i) => ({ pedido_id: (pedido as any).id, restaurante_id: data.restaurante_id, ...i }))
+    data.itens.map((i) => ({ pedido_id: pedido!.id, restaurante_id: data.restaurante_id, ...i }))
   );
   if (errItens) throw errItens;
 
@@ -299,7 +299,9 @@ export default function NewOrderScreen() {
 
       if (error) {
         // Se falhar (ex: sem internet), salvar na fila offline
-        const isNetworkError = (error as any).message?.includes("fetch") || !(error as any).status || (error as any).code === "PGRST_FETCH_ERROR";
+        const err = error as unknown as Record<string, unknown>;
+        const errMsg = String(err.message ?? "");
+        const isNetworkError = errMsg.includes("fetch") || !err.status || err.code === "PGRST_FETCH_ERROR";
         
         if (isNetworkError) {
           console.log("[Offline] Detectada falha de rede, salvando pedido offline...");
@@ -329,7 +331,7 @@ export default function NewOrderScreen() {
       // 2. Criar itens do pedido
       const itensComPedidoId = orderData.itens.map((item: any) => ({
         ...item,
-        pedido_id: data.id,
+        pedido_id: data!.id,
         restaurante_id: orderData.restaurante_id,
       }));
 

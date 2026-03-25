@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from "react";
+import React, { useState, useCallback, useEffect, useMemo } from "react";
 import {
   View,
   Text,
@@ -25,8 +25,8 @@ import supabase from "../../lib/supabase/client";
 import type { Mesa, MesaStatus } from "../../lib/supabase/types";
 import { i18n } from "../../constants/i18n";
 
-
 import { useAuth } from "../../context/auth";
+import TableSkeleton from "../../components/TableSkeleton";
 
 // ─── Queries Supabase ────────────────────────────────────────────────────────
 async function fetchMesas(restauranteId: string): Promise<Mesa[]> {
@@ -84,7 +84,7 @@ async function fetchReadyOrders(restauranteId: string): Promise<ReadyOrder[]> {
     .order("criado_em", { ascending: false });
 
   if (error) throw error;
-  return (data as any) || [];
+  return (data ?? []) as ReadyOrder[];
 }
 
 async function markOrderDelivered(id: string) {
@@ -106,7 +106,10 @@ const TableCard = React.memo(({ mesa, onPress, onEdit, index }: { mesa: Mesa; on
       layout={LinearTransition}
       style={styles.tableCard}
     >
-      <TouchableOpacity onPress={onPress} onLongPress={onEdit} activeOpacity={0.75} style={{ flex: 1 }}>
+      <TouchableOpacity onPress={onPress} onLongPress={onEdit} activeOpacity={0.75} style={{ flex: 1 }}
+        accessibilityRole="button"
+        accessibilityLabel={`${i18n.tables.tableName(mesa.numero)} - ${label}`}
+      >
         <View style={[styles.tableCardInner, { borderColor: color + "33" }]}>
           <View style={styles.tableCardHeader}>
             <View style={[styles.statusDot, { backgroundColor: color }]} />
@@ -154,7 +157,7 @@ export default function TablesScreen() {
   const saveMutation = useMutation({
     mutationFn: async (payload: { numero: number; capacidade: number }) => {
       const restId = profile?.restaurante_id;
-      console.log("Tentando salvar mesa. Restaurante ID:", restId);
+      if (__DEV__) console.log("Tentando salvar mesa. Restaurante ID:", restId);
 
       if (editingMesa) {
         return atualizarMesa(editingMesa.id, payload);
@@ -239,7 +242,7 @@ export default function TablesScreen() {
   }, [qc]);
 
   const handleAdd = async () => {
-    console.log("handleAdd acionado. Perfil atual:", profile);
+    if (__DEV__) console.log("handleAdd acionado. Perfil atual:", profile);
     
     if (!profile?.restaurante_id || profile.restaurante_id.length < 10) {
       Alert.alert("Erro", "Seu restaurante ainda não foi carregado corretamente. Por favor, reinicie o app.");
@@ -262,22 +265,25 @@ export default function TablesScreen() {
     deleteMutation.mutate(editingMesa.id);
   };
 
-  const handleEditPress = (m: Mesa) => {
+  const handleEditPress = useCallback((m: Mesa) => {
     setEditingMesa(m);
     setNewTableNumber(String(m.numero));
     setNewTableCapacity(String(m.capacidade));
     setShowAddModal(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-  };
+  }, []);
 
-  const filtered = filter === "all" ? mesas : mesas.filter((t) => t.status === filter);
+  const filtered = useMemo(
+    () => filter === "all" ? mesas : mesas.filter((t) => t.status === filter),
+    [mesas, filter]
+  );
 
-  const counts = {
+  const counts = useMemo(() => ({
     all: mesas.length,
     disponivel: mesas.filter((t) => t.status === "disponivel").length,
     ocupada: mesas.filter((t) => t.status === "ocupada").length,
     reservada: mesas.filter((t) => t.status === "reservada").length,
-  };
+  }), [mesas]);
 
   const topPadding = Platform.OS === "web" ? 67 : insets.top;
   const bottomPadding = Platform.OS === "web" ? 34 : 0;
@@ -337,6 +343,9 @@ export default function TablesScreen() {
               Haptics.selectionAsync();
             }}
             style={[styles.filterChip, filter === f.key && styles.filterChipActive]}
+            accessibilityRole="button"
+            accessibilityLabel={`${f.label} ${f.count ?? 0}`}
+            accessibilityState={{ selected: filter === f.key }}
           >
             <Text style={[styles.filterText, filter === f.key && styles.filterTextActive]}>
               {f.label}
@@ -353,9 +362,7 @@ export default function TablesScreen() {
       </ScrollView>
 
       {isLoading ? (
-        <View style={styles.loading}>
-          <ActivityIndicator color={Colors.amber} size="large" />
-        </View>
+        <TableSkeleton count={6} />
       ) : filtered.length === 0 ? (
         <View style={styles.empty}>
           <Ionicons name="restaurant-outline" size={48} color={Colors.textMuted} />
@@ -373,7 +380,7 @@ export default function TablesScreen() {
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.amber} />
           }
-          renderItem={({ item, index }) => (
+          renderItem={useCallback(({ item, index }: { item: Mesa; index: number }) => (
             <TableCard
               mesa={item}
               index={index}
@@ -383,7 +390,7 @@ export default function TablesScreen() {
               }}
               onEdit={() => handleEditPress(item)}
             />
-          )}
+          ), [handleEditPress])}
         />
       )}
 

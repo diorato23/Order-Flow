@@ -5,10 +5,11 @@ import {
   Inter_700Bold,
   useFonts,
 } from "@expo-google-fonts/inter";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, onlineManager } from "@tanstack/react-query";
 import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import React, { useEffect } from "react";
+import NetInfo from "@react-native-community/netinfo";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
@@ -22,38 +23,21 @@ import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client
 
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import Colors from "@/constants/colors";
+import OfflineBanner from "../components/OfflineBanner";
 import { offlineStore } from "../lib/offline/store";
 
-// ─── Componente de Status Offline ───────────────────────────────────────────
-function OfflineStatus() {
-  const [pendingCount, setPendingCount] = React.useState(0);
+// ─── Sync TanStack Query com NetInfo ────────────────────────────────────────
+onlineManager.setEventListener((setOnline) => {
+  return NetInfo.addEventListener((state) => {
+    const isOnline = !!(state.isConnected && state.isInternetReachable !== false);
+    setOnline(isOnline);
 
-  useEffect(() => {
-    const checkQueue = async () => {
-      const queue = await offlineStore.getQueue();
-      setPendingCount(queue.length);
-    };
-
-    const interval = setInterval(() => {
-      checkQueue();
-      if (pendingCount > 0) offlineStore.sync();
-    }, 10000); // Tentar sincronizar a cada 10s
-
-    checkQueue();
-    return () => clearInterval(interval);
-  }, [pendingCount]);
-
-  if (pendingCount === 0) return null;
-
-  return (
-    <View style={styles.offlineBanner}>
-      <Ionicons name="cloud-offline-outline" size={14} color="#fff" />
-      <Text style={styles.offlineText}>
-        {pendingCount} {pendingCount === 1 ? 'pedido pendente' : 'pedidos pendentes'} para sincronizar...
-      </Text>
-    </View>
-  );
-}
+    // Quando voltar online, sincronizar fila offline
+    if (isOnline) {
+      offlineStore.sync();
+    }
+  });
+});
 
 SplashScreen.preventAutoHideAsync();
 
@@ -152,7 +136,7 @@ export default function RootLayout() {
                 <GestureHandlerRootView style={{ flex: 1, backgroundColor: Colors.espresso }}>
                   <KeyboardProvider>
                     <StatusBar style="light" />
-                    <OfflineStatus />
+                    <OfflineBanner />
                     <RootLayoutNav />
                   </KeyboardProvider>
                 </GestureHandlerRootView>
@@ -186,18 +170,5 @@ const styles = StyleSheet.create({
       shadowRadius: 16.00,
       elevation: 24,
     } : {}),
-  },
-  offlineBanner: {
-    backgroundColor: Colors.amber,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 8,
-    gap: 8,
-  },
-  offlineText: {
-    fontFamily: 'Inter_600SemiBold',
-    fontSize: 12,
-    color: '#fff',
   },
 });

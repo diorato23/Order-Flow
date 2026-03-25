@@ -21,7 +21,7 @@ import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import Colors from "@/constants/colors";
 import supabase from "../../lib/supabase/client";
-import type { Categoria, Produto } from "../../lib/supabase/types";
+import type { Database, Categoria, Produto } from "../../lib/supabase/types";
 import { i18n } from "../../constants/i18n";
 import { useAuth } from "../../context/auth";
 import ProductSkeleton from "../../components/ProductSkeleton";
@@ -64,9 +64,12 @@ async function criarProduto(restauranteId: string, data: {
   categoria_id: string;
   tempo_preparo?: number;
 }) {
-  // @ts-ignore
   const { error } = await supabase.from("comanda_produtos").insert({
-    ...data,
+    nome: data.nome,
+    descricao: data.descricao ?? null,
+    preco: data.preco,
+    categoria_id: data.categoria_id,
+    tempo_preparo: data.tempo_preparo ?? null,
     restaurante_id: restauranteId,
   });
   if (error) throw error;
@@ -105,7 +108,7 @@ async function toggleDisponivel(id: string, disponivel: boolean) {
   if (error) throw error;
 }
 
-async function atualizarProduto(id: string, data: any) {
+async function atualizarProduto(id: string, data: Database['public']['Tables']['comanda_produtos']['Update']) {
   const { error } = await supabase
     .from("comanda_produtos")
     .update(data)
@@ -136,10 +139,8 @@ const MenuItemCard = React.memo(({ item, onToggle, onEdit, index }: { item: Prod
         style={[styles.itemCard, !item.disponivel && styles.itemCardDisabled]}
       >
         <Animated.Image 
-          source={{ uri: "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?q=80&w=200&auto=format&fit=crop" }} 
+          source={{ uri: item.imagem_url || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?q=80&w=200&auto=format&fit=crop" }} 
           style={styles.itemImage}
-          // @ts-ignore
-          sharedTransitionTag={`product-img-${item.id}`}
         />
       
       <View style={styles.itemInfo}>

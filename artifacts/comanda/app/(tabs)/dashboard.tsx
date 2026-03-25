@@ -11,6 +11,7 @@ import {
   Linking,
   Alert,
 } from "react-native";
+import DashboardSkeleton from "../../components/DashboardSkeleton";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
@@ -39,7 +40,7 @@ async function fetchStats(restauranteId: string): Promise<Stats> {
     p_restaurante_id: restauranteId,
   });
   if (error) throw error;
-  return data as Stats;
+  return data as unknown as Stats;
 }
 
 // ─── Componentes ──────────────────────────────────────────────────────────────
@@ -240,7 +241,7 @@ export default function DashboardScreen() {
       </View>
 
       {isLoading ? (
-        <View style={styles.loading}><ActivityIndicator color={Colors.amber} size="large" /></View>
+        <DashboardSkeleton />
       ) : !stats ? (
         <View style={styles.empty}>
           <Ionicons name="bar-chart-outline" size={48} color={Colors.textMuted} />
