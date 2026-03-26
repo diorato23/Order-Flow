@@ -1,1 +1,53 @@
-IyDwn42Mw68gQ29tYW5kYS1BUFAgLS0tIE9yZGVyIEZsb3cKCj4gU2lzdGVtYSBkZSBnZXJlbmNpYW1lbnRvIGRlIHBlZGlkb3MgcGFyYSByZXN0YXVyYW50ZXMuIFNpbXBsZXMsIHLDoXBpZG8gZSBpbnR1aXRpdm8uCgotLS0KCiMjIPCfk7IgUGFyYSBxdWVtIG7Do28gw6kgdMOpY25pY28KCioqUGFyYSBvIGdhcsOnb206KioKLSBBYnJlIG8gYXBwIG5vIGNlbHVsYXIKLSBTZWxlY2lvbmEgYSBtZXNhIGUgcmVnaXN0cmEgb3MgcGVkaWRvcwotIEEgY296aW5oYSByZWNlYmUgbmEgaG9yYSwgc2VtIHBhcGVsCgoqKlBhcmEgYSBjb3ppbmhhOioqCi0gVsOqIG9zIHBlZGlkb3MgZW0gdGVtcG8gcmVhbCBuYSB0ZWxhCi0gTWFyY2EgY29tbyBwcm9udG8gcXVhbmRvIGZpbmFsaXphcgoKKipQYXJhIG8gZG9ubzoqKgotIEFjb21wYW5oYSB0dWRvIHBlbG8gcGFpbmVsCi0gUmVsYXTDs3Jpb3MgZGUgdmVuZGFzIHBvciBtZXNhIGUgdHVybm8KCi0tLQoKIyMg8J+TuCBQcmV2aWV3IGRvIEFwcAoKIVtQcmV2aWV3IENvbWFuZGEtQVBQXShwcmV2aWV3LnBuZykKCi0tLQoKIyMg4pyFIEZ1bmNpb25hbGlkYWRlcwoKLSBHZXN0w6NvIGRlIG1lc2FzIChvY3VwYWRhLCBsaXZyZSwgZW0gYXRlbmRpbWVudG8pCi0gUmVnaXN0cm8gZGUgcGVkaWRvcyBjb20gc3RhdHVzIChwZW5kZW50ZSwgcHJlcGFyYW5kbywgcHJvbnRvKQotIE5vdGlmaWNhw6fDtWVzIHB1c2ggZW0gdGVtcG8gcmVhbAotIEhpc3TDs3JpY28gZSByZWxhdMOzcmlvcyBkZSBmYXR1cmFtZW50bwotIE11bHRpLXVzdcOhcmlvIChnYXLDp29tLCBjb3ppbmhhLCBnZXJlbnRlKQoKLS0tCgojIyDwn5uzIFN0YWNrIFTDqWNuaWNhCgp8IFRlY25vbG9naWEgfCBVc28gfAp8LS0tLS0tLS0tLS18LS0tLS18CnwgUmVhY3QgTmF0aXZlICsgRXhwbyB8IEFwcCBtb2JpbGUgaU9TL0FuZHJvaWQgfAp8IFN1cGFiYXNlIHwgQmFuY28gZGUgZGFkb3MgKyBBdXRoICsgUmVhbHRpbWUgfAp8IFp1c3RhbmQgfCBHZXJlbmNpYW1lbnRvIGRlIGVzdGFkbyB8CnwgUHVzaCBOb3RpZmljYXRpb25zIHwgQWxlcnRhcyBlbSB0ZW1wbyByZWFsIHwKCi0tLQoKIyMg8J+TrCBDb250YXRvCgpEZXNlbnZvbHZpZG8gcG9yICoqRGlvcmFuIFJvZHLDrWd1ZXoqKiDigKIgZGlvcmF0b0BsaXZlLmNvbQo=
+﻿# Comanda-APP - Order Flow
+
+> Sistema de gerenciamento de pedidos para restaurantes. Simples, rapido e intuitivo.
+
+---
+
+## Para quem nao e tecnico
+
+**Para o garcom:**
+- Abre o app no celular
+- Seleciona a mesa e registra os pedidos
+- A cozinha recebe na hora, sem papel
+
+**Para a cozinha:**
+- Ve os pedidos em tempo real na tela
+- Marca como pronto quando finalizar
+
+**Para o dono:**
+- Acompanha tudo pelo painel
+- Relatorios de vendas por mesa e turno
+
+---
+
+## Preview do App
+
+![Preview Comanda-APP](preview.png)
+
+---
+
+## Funcionalidades
+
+- Gestao de mesas (ocupada, livre, em atendimento)
+- Registro de pedidos com status (pendente, preparando, pronto)
+- Notificacoes push em tempo real
+- Historico e relatorios de faturamento
+- Multi-usuario (garcom, cozinha, gerente)
+
+---
+
+## Stack Tecnica
+
+| Tecnologia | Uso |
+|-----------|-----|
+| React Native + Expo | App mobile iOS/Android |
+| Supabase | Banco de dados + Auth + Realtime |
+| Zustand | Gerenciamento de estado |
+| Push Notifications | Alertas em tempo real |
+
+---
+
+## Contato
+
+Desenvolvido por **Dioran Rodriguez** - diorato@live.com
